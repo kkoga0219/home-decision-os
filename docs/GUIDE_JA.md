@@ -24,7 +24,8 @@
 8. CI/CD（GitHub Actions）
 9. 動作確認手順
 10. よくあるエラーと対処法
-11. 次のステップ
+11. フロントエンド（Next.js + TypeScript + Tailwind CSS）
+12. 次のステップ
 
 ---
 
@@ -800,12 +801,146 @@ WSL2 が必要な場合は `wsl --update` を実行。
 
 ---
 
-## 11. 次のステップ
+## 11. フロントエンド（Next.js + TypeScript + Tailwind CSS）
 
-### Phase 3: Next.js フロントエンド
-- 物件登録フォーム
-- 比較ダッシュボード
-- Recharts でチャート表示
+### 11.1 技術選定
+
+| 技術 | 役割 | 選定理由 |
+|------|------|---------|
+| Next.js 14 | React フレームワーク | App Router・SSR/SSG対応。転職市場で高評価 |
+| TypeScript | 型安全な JavaScript | バグの早期発見。IDEの補完が強力 |
+| Tailwind CSS | ユーティリティCSS | クラス名だけでデザイン完結。CSS ファイル管理不要 |
+| Recharts | チャートライブラリ | React と相性が良い（将来のグラフ表示用） |
+
+### 11.2 ディレクトリ構成
+
+```
+frontend/
+├── app/                    # Next.js App Router
+│   ├── layout.tsx             ルートレイアウト（ナビゲーション）
+│   ├── page.tsx               物件一覧（ホーム）
+│   ├── globals.css            Tailwind ベーススタイル
+│   ├── properties/
+│   │   ├── new/page.tsx       物件登録フォーム
+│   │   └── [id]/page.tsx      物件詳細（ローン・賃貸・出口スコア）
+│   └── comparison/
+│       └── page.tsx           比較ダッシュボード
+├── components/             # 再利用可能なUIコンポーネント
+│   ├── PropertyCard.tsx       物件カード
+│   ├── KpiCard.tsx            KPI表示カード
+│   └── ScoreBar.tsx           スコアバー（プログレスバー）
+├── lib/                    # ロジック・ユーティリティ
+│   ├── api.ts                 API クライアント
+│   ├── types.ts               TypeScript 型定義
+│   └── format.ts              日本円フォーマッタ
+└── Dockerfile
+```
+
+### 11.3 App Router とは
+
+Next.js 13+ で導入された新しいルーティング方式です。
+**フォルダ構造 = URL構造** になっています:
+
+```
+app/page.tsx                  → /
+app/properties/new/page.tsx   → /properties/new
+app/properties/[id]/page.tsx  → /properties/1, /properties/2, ...
+app/comparison/page.tsx       → /comparison
+```
+
+`[id]` は「動的ルート」で、URLのその部分を変数として受け取ります:
+
+```typescript
+const { id } = useParams();  // URL が /properties/3 なら id = "3"
+```
+
+### 11.4 APIクライアント — `lib/api.ts`
+
+バックエンドとの通信を一元管理する関数群です。
+
+```typescript
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: { "Content-Type": "application/json" },
+    ...init,
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`API ${res.status}: ${body}`);
+  }
+  return res.json();
+}
+```
+
+**ジェネリクス `<T>`:** 戻り値の型をコール側で指定できます。
+`request<Property[]>("/properties")` → 戻り値は `Property[]` 型
+
+**`process.env.NEXT_PUBLIC_API_URL`:**
+`NEXT_PUBLIC_` プレフィックスがついた環境変数はブラウザに露出します。
+Docker Compose では `http://localhost:8000` を設定しています。
+
+### 11.5 コンポーネント設計の考え方
+
+**"use client" ディレクティブ:**
+
+```typescript
+"use client";  // ← このファイルはブラウザ側で実行される
+```
+
+Next.js のApp Router ではデフォルトで Server Component（サーバー側で実行）ですが、
+`useState`, `useEffect` などのフック（状態管理・副作用）を使う場合は
+`"use client"` を宣言して Client Component にします。
+
+**フォームのパターン:**
+
+```typescript
+const [form, setForm] = useState<PropertyCreate>(INITIAL);
+
+// 特定のフィールドだけを更新するヘルパー
+function set<K extends keyof PropertyCreate>(key: K, value: PropertyCreate[K]) {
+  setForm((prev) => ({ ...prev, [key]: value }));
+}
+```
+
+`...prev` は「スプレッド構文」で、オブジェクトの全フィールドをコピーし、
+`[key]: value` で指定したフィールドだけを上書きします。
+
+### 11.6 Tailwind CSS の読み方
+
+```html
+<div className="bg-white rounded-lg border border-gray-200 p-4">
+```
+
+| クラス | 意味 |
+|--------|------|
+| `bg-white` | 背景: 白 |
+| `rounded-lg` | 角丸: 大きめ |
+| `border` | ボーダー: 1px |
+| `border-gray-200` | ボーダー色: 薄いグレー |
+| `p-4` | パディング: 1rem（16px） |
+
+レスポンシブ対応は `sm:`, `md:`, `lg:` プレフィックス:
+```html
+<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+```
+- デフォルト: 1列
+- 640px以上(`sm`): 2列
+- 1024px以上(`lg`): 3列
+
+### 11.7 画面構成
+
+| 画面 | URL | 機能 |
+|------|-----|------|
+| 物件一覧 | `/` | 登録済み物件のカード一覧表示 |
+| 物件登録 | `/properties/new` | フォームから新規物件登録 |
+| 物件詳細 | `/properties/{id}` | ローン・賃貸シナリオ追加、出口スコア計算 |
+| 比較 | `/comparison` | 複数物件の横並び比較テーブル |
+
+---
+
+## 12. 次のステップ
 
 ### Phase 4: 公的データ連携
 - 不動産情報ライブラリ API

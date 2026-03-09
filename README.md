@@ -141,7 +141,16 @@ home-decision-os/
 │   ├── migrations/
 │   ├── Dockerfile
 │   └── pyproject.toml
-├── frontend/                  # Next.js (Phase 3)
+├── frontend/
+│   ├── app/                   # Next.js App Router pages
+│   │   ├── page.tsx               Property list (home)
+│   │   ├── properties/new/        Property registration form
+│   │   ├── properties/[id]/       Property detail + scenarios
+│   │   └── comparison/            Side-by-side comparison
+│   ├── components/            # Reusable UI components
+│   ├── lib/                   # API client, types, formatters
+│   ├── Dockerfile
+│   └── package.json
 ├── docker-compose.yml
 └── .github/workflows/ci.yml
 ```
@@ -151,7 +160,7 @@ home-decision-os/
 - [x] **Phase 0** — Requirements & design
 - [x] **Phase 1** — Calculation logic + tests
 - [x] **Phase 2** — FastAPI + PostgreSQL + migrations
-- [ ] **Phase 3** — Next.js UI
+- [x] **Phase 3** — Next.js UI
 - [ ] **Phase 4** — Public data integration (不動産情報ライブラリ, e-Stat)
 - [ ] **Phase 5** — Docker + CI/CD + AWS deploy
 

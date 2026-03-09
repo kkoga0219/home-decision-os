@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   db:
     image: postgres:16-alpine
@@ -24,6 +22,7 @@ services:
     environment:
       HDOS_DATABASE_URL: postgresql://hdos:hdos@db:5432/hdos
       HDOS_DEBUG: "false"
+      PYTHONPATH: /app
     depends_on:
       db:
         condition: service_healthy

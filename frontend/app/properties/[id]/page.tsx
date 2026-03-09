@@ -3,12 +3,13 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import type { Property, LoanScenario, RentalScenario, ExitScore, LoanScenarioCreate, RentalScenarioCreate } from "@/lib/types";
+import type { Property, LoanScenario, RentalScenario, ExitScore, LoanScenarioCreate, RentalScenarioCreate, RentEstimateResponse } from "@/lib/types";
 import {
   getProperty, deleteProperty,
   listLoanScenarios, createLoanScenario,
   listRentalScenarios, createRentalScenario,
   getExitScore, calculateExitScore,
+  fetchRentEstimate,
 } from "@/lib/api";
 import { yen, yenCompact, pct, signedYen } from "@/lib/format";
 import KpiCard from "@/components/KpiCard";
@@ -53,6 +54,7 @@ export default function PropertyDetailPage() {
   const [loanForm, setLoanForm] = useState<LoanScenarioCreate>(DEFAULT_LOAN);
   const [showRentalForm, setShowRentalForm] = useState(false);
   const [rentalForm, setRentalForm] = useState<RentalScenarioCreate>(DEFAULT_RENTAL);
+  const [rentEstimate, setRentEstimate] = useState<RentEstimateResponse | null>(null);
 
   async function loadAll() {
     try {
@@ -96,6 +98,25 @@ export default function PropertyDetailPage() {
   async function handleCalcExitScore() {
     const score = await calculateExitScore(propertyId);
     setExitScore(score);
+  }
+
+  async function handleEstimateRent() {
+    if (!property) return;
+    try {
+      const est = await fetchRentEstimate({
+        price_jpy: property.price_jpy,
+        floor_area_sqm: property.floor_area_sqm,
+        built_year: property.built_year,
+        walking_minutes: property.walking_minutes,
+        prefecture: property.address_text?.match(/(東京都|大阪府|兵庫県|京都府|神奈川県|愛知県|福岡県)/)?.[1] ?? "",
+      });
+      setRentEstimate(est);
+      // Pre-fill the rental form with estimated rent
+      setRentalForm((prev) => ({ ...prev, expected_rent_jpy: est.estimated_rent, label: "AI推定" }));
+      setShowRentalForm(true);
+    } catch (err: any) {
+      console.error("Rent estimate failed:", err);
+    }
   }
 
   async function handleDelete() {
@@ -221,10 +242,36 @@ export default function PropertyDetailPage() {
       <section>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold">賃貸シナリオ</h2>
-          <button onClick={() => setShowRentalForm(!showRentalForm)} className={btnPrimary}>
-            {showRentalForm ? "閉じる" : "+ シナリオ追加"}
-          </button>
+          <div className="flex gap-2">
+            <button onClick={handleEstimateRent} className="bg-accent-600 text-white px-4 py-2 rounded-lg hover:bg-accent-500 text-sm font-medium transition-colors">
+              賃料を自動推定
+            </button>
+            <button onClick={() => setShowRentalForm(!showRentalForm)} className={btnPrimary}>
+              {showRentalForm ? "閉じる" : "+ シナリオ追加"}
+            </button>
+          </div>
         </div>
+
+        {rentEstimate && (
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4 text-sm">
+            <div className="font-medium text-green-800 mb-2">賃料推定結果</div>
+            <div className="grid grid-cols-3 gap-4 text-green-700">
+              <div>
+                <span className="text-green-500 text-xs">悲観</span>
+                <div className="font-bold">{rentEstimate.low_estimate.toLocaleString()}円</div>
+              </div>
+              <div>
+                <span className="text-green-500 text-xs">標準（推定値）</span>
+                <div className="font-bold text-lg">{rentEstimate.estimated_rent.toLocaleString()}円</div>
+              </div>
+              <div>
+                <span className="text-green-500 text-xs">楽観</span>
+                <div className="font-bold">{rentEstimate.high_estimate.toLocaleString()}円</div>
+              </div>
+            </div>
+            <p className="text-xs text-green-600 mt-2">{rentEstimate.method}</p>
+          </div>
+        )}
 
         {showRentalForm && (
           <form onSubmit={handleCreateRental} className="bg-gray-50 rounded-lg p-4 mb-4 space-y-3">

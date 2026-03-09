@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     # CORS
     cors_origins: list[str] = ["http://localhost:3000"]
 
+    # External APIs
+    mlit_api_key: str = ""  # 不動産情報ライブラリ API key
+
     model_config = {"env_prefix": "HDOS_"}
 
 

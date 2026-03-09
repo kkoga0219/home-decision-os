@@ -14,6 +14,8 @@ import type {
   PropertyCreate,
   RentalScenario,
   RentalScenarioCreate,
+  RentEstimateResponse,
+  URLPreviewResponse,
 } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -87,4 +89,20 @@ export async function calculateExitScore(propertyId: number): Promise<ExitScore>
 
 export async function compareProperties(ids: number[]): Promise<ComparisonResponse> {
   return request("/comparison", { method: "POST", body: JSON.stringify({ property_ids: ids }) });
+}
+
+// --- Connectors ---
+
+export async function fetchURLPreview(url: string): Promise<URLPreviewResponse> {
+  return request("/connectors/url-preview", { method: "POST", body: JSON.stringify({ url }) });
+}
+
+export async function fetchRentEstimate(params: {
+  price_jpy: number;
+  floor_area_sqm?: number | null;
+  built_year?: number | null;
+  walking_minutes?: number | null;
+  prefecture?: string;
+}): Promise<RentEstimateResponse> {
+  return request("/connectors/rent-estimate", { method: "POST", body: JSON.stringify(params) });
 }

@@ -25,7 +25,8 @@
 9. 動作確認手順
 10. よくあるエラーと対処法
 11. フロントエンド（Next.js + TypeScript + Tailwind CSS）
-12. 次のステップ
+12. 外部データ連携（コネクタ）
+13. 次のステップ
 
 ---
 
@@ -940,17 +941,171 @@ function set<K extends keyof PropertyCreate>(key: K, value: PropertyCreate[K]) {
 
 ---
 
-## 12. 次のステップ
+## 12. 外部データ連携（コネクタ）
 
-### Phase 4: 公的データ連携
-- 不動産情報ライブラリ API
-- e-Stat（統計データ）
-- ハザードマップ情報
+Phase 4 として、外部データソースとの連携機能（コネクタ）を実装しました。
+コネクタは「**外部からデータを取得して統一的な形式で返す**」部品です。
+
+### 12.1 コネクタの設計思想
+
+```
+backend/app/connectors/
+├── base.py              # 基底クラス（全コネクタ共通のインターフェース）
+├── url_preview.py       # URL メタデータ取得
+├── rent_estimator.py    # 賃料推定エンジン
+└── mlit_transaction.py  # 国交省 不動産取引API
+```
+
+すべてのコネクタは `BaseConnector` を継承し、`ConnectorResult` を返します。
+
+```python
+@dataclass
+class ConnectorResult:
+    success: bool           # 成功/失敗
+    source: str             # コネクタ名
+    data: dict[str, Any]    # 取得データ
+    errors: list[str]       # エラーメッセージ
+```
+
+この設計のメリット:
+- **統一インターフェース**: 呼び出し側は `result.success` をチェックするだけ
+- **テスト容易性**: コネクタを差し替えてモック化しやすい
+- **拡張性**: 新しいデータソース追加時、BaseConnector を継承するだけ
+
+### 12.2 URL プレビュー（OGP メタデータ取得）
+
+不動産ポータルサイト（SUUMO、LIFULL HOME'S など）の URL を貼ると、物件情報を自動取得する機能です。
+
+仕組み:
+1. 指定 URL の HTML を `httpx` で取得
+2. `<meta property="og:title">` などの OGP タグを正規表現で抽出
+3. SUUMO の URL の場合、タイトルと説明文から追加情報をパース
+
+```python
+# SUUMO タイトルの例: "プラウド塚口 3LDK 65.5㎡ 3,500万円"
+# 正規表現で以下を抽出:
+m = re.search(r"([\d,]+)\s*万円", combined)  # → 3,500 → 35,000,000円
+m = re.search(r"([\d.]+)\s*[㎡m²]", combined)  # → 65.5㎡
+m = re.search(r"\b(\d[LDKS]{1,4})\b", combined)  # → 3LDK
+m = re.search(r"徒歩\s*(\d+)\s*分", combined)  # → 5分
+m = re.search(r"「?([^」\s]{2,6})駅」?", combined)  # → 塚口
+```
+
+フロントエンドでは、物件登録フォームに URL を貼って「自動取得」ボタンを押すと、
+空欄のフィールドに自動入力されます（既に入力済みのフィールドは上書きしません）。
+
+### 12.3 賃料推定エンジン
+
+物件を将来賃貸に出した場合の想定家賃を、以下のロジックで推定します。
+
+```
+推定月額家賃 = 物件価格 × 調整済み利回り ÷ 12
+```
+
+**利回りテーブル（都道府県別）**:
+
+| 都道府県 | 表面利回り |
+|----------|-----------|
+| 東京都 | 4.2% |
+| 大阪府 | 5.0% |
+| 兵庫県 | 5.5% |
+| 神奈川県 | 4.8% |
+| その他 | 5.5% |
+
+利回りは以下の要因で調整されます:
+
+**築年数による割引**（古いほど家賃が下がる）:
+- 築0-5年: 100%（割引なし）
+- 築11-15年: 93%
+- 築21-25年: 82%
+- 築31年以上: 68%
+
+**駅距離によるプレミアム**:
+- 徒歩3分以内: +5%
+- 徒歩5分以内: +2%
+- 徒歩11-15分: -7%
+- 徒歩16分以上: -12%
+
+計算例（プラウド塚口 3,800万円、築11年、徒歩5分、兵庫県）:
+
+```
+基本利回り: 5.5%
+× 築年数係数: 0.93（築11年）
+× 駅距離係数: 1.02（徒歩5分）
+= 調整済み利回り: 5.22%
+
+月額家賃 = 38,000,000 × 5.22% ÷ 12 ≒ 165,000円
+信頼区間: 140,000円 〜 190,000円（±15%）
+```
+
+### 12.4 国交省 不動産取引API（MLIT）
+
+国土交通省の「不動産情報ライブラリ」から実際の取引価格データを取得します。
+このAPIは無料で利用できますが、API キーの取得が必要です。
+
+取得URL: `https://www.reinfolib.mlit.go.jp/`
+
+```python
+# 設定方法（.env ファイルまたは環境変数）
+HDOS_MLIT_API_KEY=your-api-key-here
+```
+
+レスポンスには地域の取引統計（中央値、平均単価、取引件数）が含まれ、
+賃料推定のクロスバリデーションに活用されます。
+
+### 12.5 コネクタ API エンドポイント
+
+| メソッド | パス | 説明 |
+|---------|------|------|
+| POST | `/connectors/url-preview` | URL からメタデータ取得 |
+| POST | `/connectors/market-data` | 不動産取引データ取得（要APIキー）|
+| POST | `/connectors/rent-estimate` | 賃料推定 |
+
+### 12.6 フロントエンドとの連携
+
+**物件登録フォーム**:
+URL 入力欄の横に「自動取得」ボタンを配置。クリックすると `fetchURLPreview(url)` を呼び、
+取得したデータで空欄フィールドを自動入力します。
+
+```typescript
+// frontend/lib/api.ts
+export async function fetchURLPreview(url: string): Promise<URLPreviewResponse> {
+  return request("/connectors/url-preview", { method: "POST", body: JSON.stringify({ url }) });
+}
+```
+
+**物件詳細ページ**:
+「賃料を推定」ボタンで `fetchRentEstimate(params)` を呼び、
+推定家賃・信頼区間・利回りを表示します。
+この値をそのまま賃貸シナリオの想定家賃に使用できます。
+
+### 12.7 コネクタのテスト
+
+コネクタのテストは **外部通信なしで動作する** ように設計しています。
+
+- `test_url_preview.py`: HTML パースロジック（`_extract_meta`, `_parse_suumo_hints`）のみテスト。HTTPは呼ばない。
+- `test_rent_estimator.py`: `RentEstimatorConnector.fetch()` を直接呼び出し。外部APIは不使用。
+
+テスト実行:
+```bash
+docker compose exec api pytest tests/test_domain/test_url_preview.py tests/test_domain/test_rent_estimator.py -v
+```
+
+---
+
+## 13. 次のステップ
 
 ### Phase 5: AWS デプロイ
 - AWS App Runner（API）
 - AWS RDS（PostgreSQL）
 - GitHub Actions → AWS 自動デプロイ
+- カスタムドメイン設定
+
+### Phase 6: 発展的な機能
+- e-Stat（統計データ）連携
+- ハザードマップ情報の自動判定
+- ML ベースの賃料推定モデル
+- 物件スコアリングの重み付けカスタマイズ
 
 ---
 

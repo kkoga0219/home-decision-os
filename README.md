@@ -26,14 +26,14 @@ Given a property and your financial assumptions, the system calculates:
 │  Frontend  │◀────│   REST API   │◀────│    DB      │
 └────────────┘     └──────┬───────┘     └────────────┘
                           │
-                   ┌──────┴───────┐
-                   │   Domain     │
-                   │  ┌─────────┐ │
-                   │  │Mortgage │ │
-                   │  │OwnerCF  │ │
-                   │  │RentalCF │ │
-                   │  │ExitScore│ │
-                   │  └─────────┘ │
+                   ┌──────┴───────┐     ┌─────────────┐
+                   │   Domain     │     │ Connectors  │
+                   │  ┌─────────┐ │     │ ┌─────────┐ │
+                   │  │Mortgage │ │     │ │URL Prev │ │
+                   │  │OwnerCF  │ │     │ │Rent Est │ │
+                   │  │RentalCF │ │     │ │MLIT API │ │
+                   │  │ExitScore│ │     │ └─────────┘ │
+                   │  └─────────┘ │     └─────────────┘
                    └──────────────┘
 ```
 
@@ -63,6 +63,9 @@ Given a property and your financial assumptions, the system calculates:
 | `POST`   | `/properties/{id}/exit-score/calculate` | Calculate exit score |
 | `GET`    | `/properties/{id}/exit-score` | Get latest exit score |
 | `POST`   | `/comparison` | Compare multiple properties side-by-side |
+| `POST`   | `/connectors/url-preview` | Extract metadata from property listing URL |
+| `POST`   | `/connectors/market-data` | Fetch MLIT transaction data (requires API key) |
+| `POST`   | `/connectors/rent-estimate` | Estimate monthly rent for a property |
 
 Interactive API docs available at `http://localhost:8000/docs` (Swagger UI).
 

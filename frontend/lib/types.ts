@@ -116,3 +116,31 @@ export interface PropertySummary {
 export interface ComparisonResponse {
   properties: PropertySummary[];
 }
+
+// --- Connector types ---
+
+export interface URLPreviewResponse {
+  success: boolean;
+  data: {
+    url?: string;
+    title?: string;
+    description?: string;
+    image?: string;
+    site_name?: string;
+    hint_price_jpy?: number;
+    hint_floor_area_sqm?: number;
+    hint_layout?: string;
+    hint_walking_minutes?: number;
+    hint_station_name?: string;
+  };
+  errors: string[];
+}
+
+export interface RentEstimateResponse {
+  success: boolean;
+  estimated_rent: number;
+  low_estimate: number;
+  high_estimate: number;
+  gross_yield: number;
+  method: string;
+}

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createProperty } from "@/lib/api";
+import { createProperty, fetchURLPreview } from "@/lib/api";
 import type { PropertyCreate } from "@/lib/types";
 
 const INITIAL: PropertyCreate = {
@@ -51,6 +51,8 @@ export default function NewPropertyPage() {
   const [form, setForm] = useState<PropertyCreate>(INITIAL);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [urlLoading, setUrlLoading] = useState(false);
+  const [urlHint, setUrlHint] = useState<string | null>(null);
 
   function set<K extends keyof PropertyCreate>(key: K, value: PropertyCreate[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -59,6 +61,40 @@ export default function NewPropertyPage() {
   function numOrUndef(v: string): number | undefined {
     const n = Number(v);
     return v === "" || isNaN(n) ? undefined : n;
+  }
+
+  async function handleURLPreview() {
+    const url = form.source_url;
+    if (!url) return;
+    setUrlLoading(true);
+    setUrlHint(null);
+    try {
+      const res = await fetchURLPreview(url);
+      if (res.success && res.data) {
+        const d = res.data;
+        const updates: Partial<PropertyCreate> = {};
+        if (d.title && !form.name) updates.name = d.title;
+        if (d.hint_price_jpy && !form.price_jpy) updates.price_jpy = d.hint_price_jpy;
+        if (d.hint_floor_area_sqm && !form.floor_area_sqm) updates.floor_area_sqm = d.hint_floor_area_sqm;
+        if (d.hint_layout && !form.layout) updates.layout = d.hint_layout;
+        if (d.hint_walking_minutes && !form.walking_minutes) updates.walking_minutes = d.hint_walking_minutes;
+        if (d.hint_station_name && !form.station_name) updates.station_name = d.hint_station_name;
+
+        if (Object.keys(updates).length > 0) {
+          setForm((prev) => ({ ...prev, ...updates }));
+          const fields = Object.keys(updates).join(", ");
+          setUrlHint(`自動取得しました: ${fields}`);
+        } else {
+          setUrlHint("URLからの情報取得を試みましたが、新たに取得できるデータはありませんでした");
+        }
+      } else {
+        setUrlHint("URLからの情報取得に失敗しました");
+      }
+    } catch {
+      setUrlHint("URLへの接続に失敗しました");
+    } finally {
+      setUrlLoading(false);
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -84,15 +120,42 @@ export default function NewPropertyPage() {
       )}
 
       <form onSubmit={handleSubmit} className="space-y-8">
+        {/* URL入力 + 自動取得 */}
+        <section>
+          <h2 className="text-lg font-semibold mb-4 pb-2 border-b">URLから自動取得</h2>
+          <div className="space-y-3">
+            <Field label="物件URL" hint="SUUMO / LIFULL HOME'S などのURLを貼ると情報を自動取得します">
+              <div className="flex gap-2">
+                <input
+                  className={inputClass}
+                  value={form.source_url ?? ""}
+                  onChange={(e) => set("source_url", e.target.value || null)}
+                  placeholder="https://suumo.jp/ms/chuko/..."
+                />
+                <button
+                  type="button"
+                  onClick={handleURLPreview}
+                  disabled={!form.source_url || urlLoading}
+                  className="shrink-0 bg-gray-700 text-white px-4 py-2 rounded-lg hover:bg-gray-800 disabled:opacity-50 text-sm font-medium transition-colors"
+                >
+                  {urlLoading ? "取得中..." : "自動取得"}
+                </button>
+              </div>
+            </Field>
+            {urlHint && (
+              <div className="bg-blue-50 border border-blue-200 text-blue-700 rounded-lg p-3 text-sm">
+                {urlHint}
+              </div>
+            )}
+          </div>
+        </section>
+
         {/* 基本情報 */}
         <section>
           <h2 className="text-lg font-semibold mb-4 pb-2 border-b">基本情報</h2>
           <div className="space-y-4">
             <Field label="物件名" required>
               <input className={inputClass} value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="例: プラウド塚口" required />
-            </Field>
-            <Field label="物件URL" hint="SUUMO / LIFULL HOME'S などのURL">
-              <input className={inputClass} value={form.source_url ?? ""} onChange={(e) => set("source_url", e.target.value || null)} placeholder="https://suumo.jp/..." />
             </Field>
             <Field label="住所">
               <input className={inputClass} value={form.address_text ?? ""} onChange={(e) => set("address_text", e.target.value || null)} placeholder="例: 兵庫県尼崎市塚口本町1丁目" />

@@ -10,7 +10,9 @@ import {
   listRentalScenarios, createRentalScenario,
   getExitScore, calculateExitScore,
   fetchRentEstimate,
+  simulateCashflowForProperty,
 } from "@/lib/api";
+import type { CashflowSimulationResult, ExitScenarioData } from "@/lib/api";
 import { yen, yenCompact, pct, signedYen } from "@/lib/format";
 import KpiCard from "@/components/KpiCard";
 import ScoreBar from "@/components/ScoreBar";
@@ -55,6 +57,32 @@ export default function PropertyDetailPage() {
   const [showRentalForm, setShowRentalForm] = useState(false);
   const [rentalForm, setRentalForm] = useState<RentalScenarioCreate>(DEFAULT_RENTAL);
   const [rentEstimate, setRentEstimate] = useState<RentEstimateResponse | null>(null);
+
+  // Cashflow simulation
+  const [cfResult, setCfResult] = useState<CashflowSimulationResult | null>(null);
+  const [cfLoading, setCfLoading] = useState(false);
+  const [cfScenario, setCfScenario] = useState<"self_use" | "investment">("self_use");
+  const [cfParams, setCfParams] = useState({
+    down_payment_jpy: 0,
+    annual_interest_rate: 0.005,
+    loan_years: 35,
+    simulation_years: 35,
+  });
+
+  async function handleSimulateCF() {
+    setCfLoading(true);
+    try {
+      const res = await simulateCashflowForProperty(propertyId, {
+        ...cfParams,
+        scenario_type: cfScenario,
+      });
+      setCfResult(res);
+    } catch (err: any) {
+      console.error("CF simulation failed:", err);
+    } finally {
+      setCfLoading(false);
+    }
+  }
 
   async function loadAll() {
     try {
@@ -360,6 +388,9 @@ export default function PropertyDetailPage() {
                 {exitScore.total_score < 40 && "出口戦略: リスクあり"}
               </div>
             </div>
+            {exitScore.assessment && (
+              <p className="text-sm text-gray-600 mb-4 bg-gray-50 rounded p-3">{exitScore.assessment}</p>
+            )}
             <div className="space-y-3">
               <ScoreBar label="駅距離" score={exitScore.station_score} />
               <ScoreBar label="面積" score={exitScore.size_score} />
@@ -374,6 +405,207 @@ export default function PropertyDetailPage() {
           <p className="text-sm text-gray-400">「計算する」ボタンを押すと出口スコアが算出されます</p>
         )}
       </section>
+
+      {/* ── Cashflow Simulation ── */}
+      <section>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-bold">キャッシュフロー分析</h2>
+          <Link
+            href={`/cashflow?price=${p.price_jpy}&area=${p.floor_area_sqm ?? ""}&year=${p.built_year ?? ""}&mgmt=${p.management_fee_jpy ?? 0}&repair=${p.repair_reserve_jpy ?? 0}`}
+            className="text-sm text-primary-600 hover:underline"
+          >
+            詳細CF分析ページへ →
+          </Link>
+        </div>
+
+        {/* Quick simulation form */}
+        <div className="bg-gray-50 rounded-lg p-4 mb-4">
+          <div className="flex items-center gap-3 mb-3">
+            <span className="text-sm font-medium text-gray-700">シナリオ:</span>
+            <button
+              onClick={() => setCfScenario("self_use")}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${cfScenario === "self_use" ? "bg-blue-600 text-white" : "bg-gray-200 text-gray-600"}`}
+            >
+              自己居住
+            </button>
+            <button
+              onClick={() => setCfScenario("investment")}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${cfScenario === "investment" ? "bg-blue-600 text-white" : "bg-gray-200 text-gray-600"}`}
+            >
+              投資（賃貸）
+            </button>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div>
+              <label className="text-xs text-gray-500">頭金（万円）</label>
+              <input
+                className={inputClass}
+                type="number"
+                min={0}
+                value={Math.round(cfParams.down_payment_jpy / 10000)}
+                onChange={(e) => setCfParams({ ...cfParams, down_payment_jpy: Number(e.target.value) * 10000 })}
+              />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500">金利（%）</label>
+              <input
+                className={inputClass}
+                type="number"
+                step="0.1"
+                min={0}
+                max={20}
+                value={(cfParams.annual_interest_rate * 100).toFixed(1)}
+                onChange={(e) => setCfParams({ ...cfParams, annual_interest_rate: Number(e.target.value) / 100 })}
+              />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500">返済年数</label>
+              <input
+                className={inputClass}
+                type="number"
+                min={1}
+                max={50}
+                value={cfParams.loan_years}
+                onChange={(e) => setCfParams({ ...cfParams, loan_years: Number(e.target.value) })}
+              />
+            </div>
+            <div className="flex items-end">
+              <button
+                onClick={handleSimulateCF}
+                disabled={cfLoading}
+                className={btnPrimary + " w-full"}
+              >
+                {cfLoading ? "計算中..." : "CF分析を実行"}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* CF Results */}
+        {cfResult && (
+          <div className="space-y-4">
+            {/* Initial costs + 10yr summary */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <KpiCard title="初期費用合計" value={yenCompact(cfResult.initial_costs.total)} />
+              <KpiCard title="10年総コスト" value={yenCompact(cfResult.summary_10yr.total_cost)} />
+              <KpiCard
+                title={cfScenario === "investment" ? "10年総収入" : "10年控除等"}
+                value={yenCompact(cfResult.summary_10yr.total_benefit)}
+              />
+              <KpiCard
+                title="10年純コスト"
+                value={yenCompact(cfResult.summary_10yr.net_cost)}
+                sub={`月平均 ${yen(Math.round(cfResult.summary_10yr.net_cost / 120))}`}
+              />
+            </div>
+
+            {/* Exit scenarios */}
+            <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+              <h3 className="px-4 py-3 bg-gray-50 text-sm font-bold border-b">売却シミュレーション</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-gray-500 text-xs">
+                      <th className="px-3 py-2 text-left">年数</th>
+                      <th className="px-3 py-2 text-right">想定売却額</th>
+                      <th className="px-3 py-2 text-right">ローン残高</th>
+                      <th className="px-3 py-2 text-right">累計CF</th>
+                      <th className="px-3 py-2 text-right">トータルリターン</th>
+                      <th className="px-3 py-2 text-right">年利回り</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cfResult.exit_scenarios.map((ex: ExitScenarioData) => (
+                      <tr key={ex.year} className="border-b border-gray-50 hover:bg-gray-50">
+                        <td className="px-3 py-2">{ex.year}年後</td>
+                        <td className="px-3 py-2 text-right">{yenCompact(ex.sale_price)}</td>
+                        <td className="px-3 py-2 text-right">{yenCompact(ex.outstanding_balance)}</td>
+                        <td className={`px-3 py-2 text-right ${ex.cumulative_cashflow >= 0 ? "text-green-600" : "text-red-600"}`}>
+                          {signedYen(ex.cumulative_cashflow)}
+                        </td>
+                        <td className={`px-3 py-2 text-right font-bold ${ex.total_return >= 0 ? "text-green-600" : "text-red-600"}`}>
+                          {signedYen(ex.total_return)}
+                        </td>
+                        <td className={`px-3 py-2 text-right ${ex.annual_roi_pct >= 0 ? "text-green-600" : "text-red-600"}`}>
+                          {ex.annual_roi_pct.toFixed(1)}%
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Annual cashflow table (collapsible) */}
+            <CashflowDetailTable cashflows={cfResult.annual_cashflows} scenario={cfScenario} />
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+
+/* ── Collapsible Annual Cashflow Table ── */
+function CashflowDetailTable({
+  cashflows,
+  scenario,
+}: {
+  cashflows: CashflowSimulationResult["annual_cashflows"];
+  scenario: string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full px-4 py-3 bg-gray-50 text-sm font-bold border-b flex justify-between items-center hover:bg-gray-100 transition-colors"
+      >
+        <span>年間キャッシュフロー詳細</span>
+        <span className="text-gray-400">{open ? "▲ 閉じる" : "▼ 展開"}</span>
+      </button>
+      {open && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b text-gray-500">
+                <th className="px-2 py-2 text-left">年</th>
+                <th className="px-2 py-2 text-right">ローン返済</th>
+                <th className="px-2 py-2 text-right">管理費+修繕</th>
+                <th className="px-2 py-2 text-right">固定資産税</th>
+                <th className="px-2 py-2 text-right">住宅ローン控除</th>
+                {scenario === "investment" && <>
+                  <th className="px-2 py-2 text-right">賃料収入</th>
+                  <th className="px-2 py-2 text-right">減価償却益</th>
+                </>}
+                <th className="px-2 py-2 text-right">年間CF</th>
+                <th className="px-2 py-2 text-right">累計CF</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cashflows.map((cf) => (
+                <tr key={cf.year} className="border-b border-gray-50 hover:bg-gray-50">
+                  <td className="px-2 py-1.5">{cf.year}年目</td>
+                  <td className="px-2 py-1.5 text-right">{yenCompact(cf.loan_payment)}</td>
+                  <td className="px-2 py-1.5 text-right">{yenCompact(cf.management_fee + cf.repair_reserve)}</td>
+                  <td className="px-2 py-1.5 text-right">{yenCompact(cf.property_tax)}</td>
+                  <td className="px-2 py-1.5 text-right text-green-600">{cf.tax_credit > 0 ? `+${yenCompact(cf.tax_credit)}` : "-"}</td>
+                  {scenario === "investment" && <>
+                    <td className="px-2 py-1.5 text-right text-blue-600">{yenCompact(cf.net_rent)}</td>
+                    <td className="px-2 py-1.5 text-right text-blue-600">{cf.depreciation_benefit > 0 ? `+${yenCompact(cf.depreciation_benefit)}` : "-"}</td>
+                  </>}
+                  <td className={`px-2 py-1.5 text-right font-bold ${cf.cashflow >= 0 ? "text-green-600" : "text-red-600"}`}>
+                    {signedYen(cf.cashflow)}
+                  </td>
+                  <td className={`px-2 py-1.5 text-right ${cf.cumulative_cashflow >= 0 ? "text-green-600" : "text-red-600"}`}>
+                    {signedYen(cf.cumulative_cashflow)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

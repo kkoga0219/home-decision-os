@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { searchArea, createProperty } from "@/lib/api";
 import type { AreaSearchResult, AreaSearchListing } from "@/lib/api";
 import type { AreaStats } from "@/lib/types";
@@ -299,8 +300,8 @@ function ListingRow({
           )}
         </div>
 
-        {/* Register button */}
-        <div className="shrink-0">
+        {/* Actions */}
+        <div className="shrink-0 flex flex-col gap-1.5">
           <button
             onClick={onRegister}
             disabled={!listing.price_jpy || registering}
@@ -308,6 +309,14 @@ function ListingRow({
           >
             {registering ? "登録中..." : "登録"}
           </button>
+          {listing.price_jpy && (
+            <Link
+              href={`/cashflow?price=${listing.price_jpy}&area=${listing.floor_area_sqm ?? ""}&year=${listing.built_year ?? ""}`}
+              className="bg-blue-50 text-blue-600 hover:bg-blue-100 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors text-center"
+            >
+              CF分析
+            </Link>
+          )}
         </div>
       </div>
     </div>

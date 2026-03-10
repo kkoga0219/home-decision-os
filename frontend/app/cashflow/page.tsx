@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import type {
   CashflowSimulationParams,
   CashflowSimulationResult,
@@ -28,12 +29,20 @@ function pct(n: number, digits = 1): string {
 // ---------------------------------------------------------------------------
 
 export default function CashflowPage() {
-  // --- Input state ---
-  const [priceMan, setPriceMan] = useState("3000");
-  const [areaSqm, setAreaSqm] = useState("68");
-  const [builtYear, setBuiltYear] = useState("2010");
-  const [mgmtFee, setMgmtFee] = useState("12000");
-  const [repairRes, setRepairRes] = useState("8000");
+  const searchParams = useSearchParams();
+
+  // --- Input state (pre-filled from URL params if available) ---
+  const qPrice = searchParams.get("price");
+  const qArea = searchParams.get("area");
+  const qYear = searchParams.get("year");
+  const qMgmt = searchParams.get("mgmt");
+  const qRepair = searchParams.get("repair");
+
+  const [priceMan, setPriceMan] = useState(qPrice ? String(Math.round(Number(qPrice) / 10000)) : "3000");
+  const [areaSqm, setAreaSqm] = useState(qArea || "68");
+  const [builtYear, setBuiltYear] = useState(qYear || "2010");
+  const [mgmtFee, setMgmtFee] = useState(qMgmt || "12000");
+  const [repairRes, setRepairRes] = useState(qRepair || "8000");
 
   const [downPaymentMan, setDownPaymentMan] = useState("300");
   const [rate, setRate] = useState("0.5");

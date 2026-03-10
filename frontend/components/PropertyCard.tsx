@@ -52,9 +52,18 @@ export default function PropertyCard({ property: p }: PropertyCardProps) {
         )}
       </div>
 
-      {p.address_text && (
-        <p className="text-xs text-gray-400 mt-3 truncate">{p.address_text}</p>
-      )}
+      <div className="flex items-center justify-between mt-3">
+        {p.address_text && (
+          <p className="text-xs text-gray-400 truncate flex-1">{p.address_text}</p>
+        )}
+        <Link
+          href={`/cashflow?price=${p.price_jpy}&area=${p.floor_area_sqm ?? ""}&year=${p.built_year ?? ""}&mgmt=${p.management_fee_jpy ?? 0}&repair=${p.repair_reserve_jpy ?? 0}`}
+          onClick={(e) => e.stopPropagation()}
+          className="shrink-0 ml-2 bg-blue-50 text-blue-600 hover:bg-blue-100 px-2 py-1 rounded text-xs font-medium transition-colors"
+        >
+          CF分析
+        </Link>
+      </div>
     </Link>
   );
 }

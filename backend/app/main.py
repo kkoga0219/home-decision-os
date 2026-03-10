@@ -3,7 +3,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import comparison, connectors, exit_scores, loan_scenarios, properties, rental_scenarios
+from app.api.routes import cashflow, comparison, connectors, exit_scores, loan_scenarios, properties, rental_scenarios
 from app.config import settings
 
 app = FastAPI(
@@ -27,6 +27,7 @@ app.include_router(rental_scenarios.router)
 app.include_router(exit_scores.router)
 app.include_router(comparison.router)
 app.include_router(connectors.router)
+app.include_router(cashflow.router)
 
 
 @app.get("/health", tags=["system"])

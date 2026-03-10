@@ -31,6 +31,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <Link href="/properties/new" className="text-sm text-gray-600 hover:text-primary-600 transition-colors">
                   物件登録
                 </Link>
+                <Link href="/cashflow" className="text-sm text-gray-600 hover:text-primary-600 transition-colors font-medium">
+                  CF分析
+                </Link>
                 <Link href="/comparison" className="text-sm text-gray-600 hover:text-primary-600 transition-colors">
                   比較
                 </Link>

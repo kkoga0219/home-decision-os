@@ -163,3 +163,98 @@ export async function searchArea(params: {
 }): Promise<AreaSearchResult> {
   return request("/connectors/area-search", { method: "POST", body: JSON.stringify(params) });
 }
+
+// --- Cashflow Simulation ---
+
+export interface CashflowSimulationParams {
+  price_jpy: number;
+  floor_area_sqm?: number;
+  built_year?: number | null;
+  management_fee_jpy?: number;
+  repair_reserve_jpy?: number;
+  down_payment_jpy?: number;
+  annual_interest_rate?: number;
+  loan_years?: number;
+  tax_credit_rate?: number;
+  tax_credit_years?: number | null;
+  tax_credit_max?: number;
+  property_tax_annual?: number | null;
+  insurance_annual?: number;
+  scenario_type?: "self_use" | "investment";
+  expected_rent_jpy?: number;
+  vacancy_rate?: number;
+  pm_fee_rate?: number;
+  marginal_tax_rate?: number;
+  simulation_years?: number;
+  annual_price_decline_rate?: number;
+}
+
+export interface CashflowYearData {
+  year: number;
+  loan_payment: number;
+  management_fee: number;
+  repair_reserve: number;
+  property_tax: number;
+  insurance: number;
+  total_expense: number;
+  tax_credit: number;
+  depreciation_benefit: number;
+  gross_rent: number;
+  vacancy_loss: number;
+  pm_fee: number;
+  net_rent: number;
+  cashflow: number;
+  cumulative_cashflow: number;
+  outstanding_balance: number;
+}
+
+export interface ExitScenarioData {
+  year: number;
+  sale_price: number;
+  outstanding_balance: number;
+  selling_costs: number;
+  capital_gain: number;
+  cumulative_cashflow: number;
+  total_return: number;
+  annual_roi_pct: number;
+}
+
+export interface CashflowSimulationResult {
+  price_jpy: number;
+  scenario_type: string;
+  initial_costs: {
+    down_payment: number;
+    broker_fee: number;
+    registration_cost: number;
+    acquisition_tax: number;
+    loan_guarantee_fee: number;
+    other_initial: number;
+    total: number;
+  };
+  annual_cashflows: CashflowYearData[];
+  exit_scenarios: ExitScenarioData[];
+  summary_10yr: {
+    total_cost: number;
+    total_benefit: number;
+    net_cost: number;
+  };
+}
+
+export async function simulateCashflow(
+  params: CashflowSimulationParams,
+): Promise<CashflowSimulationResult> {
+  return request("/cashflow/simulate", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+export async function simulateCashflowForProperty(
+  propertyId: number,
+  params: Omit<CashflowSimulationParams, "price_jpy" | "floor_area_sqm" | "built_year" | "management_fee_jpy" | "repair_reserve_jpy">,
+): Promise<CashflowSimulationResult> {
+  return request(`/cashflow/properties/${propertyId}/simulate`, {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}

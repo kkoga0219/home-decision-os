@@ -330,8 +330,8 @@ def simulate_cashflow(
             + cf.insurance
         )
 
-        # 住宅ローン控除
-        if yr <= tax_credit_years and yr <= loan_years:
+        # 住宅ローン控除 (自己居住のみ。投資用物件は対象外)
+        if scenario_type == "self_use" and yr <= tax_credit_years and yr <= loan_years:
             balance = approximate_outstanding_balance(
                 loan_amount, annual_interest_rate, loan_years, yr
             )
@@ -341,22 +341,36 @@ def simulate_cashflow(
         else:
             cf.tax_credit = 0
 
-        # 減価償却の節税効果 (投資シナリオ)
-        if scenario_type == "investment" and annual_depreciation > 0:
-            # 経過年数が残耐用年数を超えたら0
-            total_age = building_age + yr
-            remaining = max(
-                (RC_USEFUL_LIFE - building_age) + int(building_age * 0.2), 2
-            )
-            if yr <= remaining:
-                cf.depreciation_benefit = int(annual_depreciation * marginal_tax_rate)
-
         # 賃料収入 (投資シナリオ)
         if scenario_type == "investment" and expected_rent_jpy > 0:
             cf.gross_rent = expected_rent_jpy * 12
             cf.vacancy_loss = int(cf.gross_rent * vacancy_rate)
             cf.pm_fee = int(cf.gross_rent * pm_fee_rate)
             cf.net_rent = cf.gross_rent - cf.vacancy_loss - cf.pm_fee
+
+        # 減価償却の節税効果 (投資シナリオ)
+        # 不動産所得 = 賃料 - 経費 - 減価償却
+        # 赤字が出た場合のみ、給与所得等と損益通算して節税効果が発生
+        # ※ 賃料収入がゼロなら不動産所得もゼロ → 減価償却による節税なし
+        if scenario_type == "investment" and annual_depreciation > 0 and cf.net_rent > 0:
+            remaining = max(
+                (RC_USEFUL_LIFE - building_age) + int(building_age * 0.2), 2
+            )
+            if yr <= remaining:
+                # 不動産所得 = 手取り賃料 - (管理費 + 修繕 + 固定資産税 + 保険) - 減価償却
+                # ※ ローン利息も経費だが簡略化のため含めない (保守的)
+                rental_expenses = (
+                    cf.management_fee + cf.repair_reserve
+                    + cf.property_tax + cf.insurance
+                )
+                real_estate_income = cf.net_rent - rental_expenses - annual_depreciation
+                if real_estate_income < 0:
+                    # 赤字分を損益通算 → 節税
+                    cf.depreciation_benefit = int(abs(real_estate_income) * marginal_tax_rate)
+                else:
+                    # 黒字なら減価償却は経費として所得を減らすが、
+                    # CF上は賃料に含まれているので別途加算しない
+                    cf.depreciation_benefit = 0
 
         # 年間CF
         cf.cashflow = (

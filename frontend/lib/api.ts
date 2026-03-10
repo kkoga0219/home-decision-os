@@ -7,6 +7,7 @@
 
 import type {
   ComparisonResponse,
+  EnrichmentResult,
   ExitScore,
   LoanScenario,
   LoanScenarioCreate,
@@ -105,4 +106,21 @@ export async function fetchRentEstimate(params: {
   prefecture?: string;
 }): Promise<RentEstimateResponse> {
   return request("/connectors/rent-estimate", { method: "POST", body: JSON.stringify(params) });
+}
+
+// --- Integrated Enrichment ---
+
+export async function enrichFromURL(url: string): Promise<EnrichmentResult> {
+  return request("/connectors/enrich-url", { method: "POST", body: JSON.stringify({ url }) });
+}
+
+export async function enrichFromData(params: {
+  price_jpy: number;
+  station_name?: string;
+  address_text?: string;
+  floor_area_sqm?: number | null;
+  built_year?: number | null;
+  walking_minutes?: number | null;
+}): Promise<EnrichmentResult> {
+  return request("/connectors/enrich-data", { method: "POST", body: JSON.stringify(params) });
 }

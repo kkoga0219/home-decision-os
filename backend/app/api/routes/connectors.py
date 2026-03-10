@@ -1,7 +1,9 @@
 """Connector API endpoints.
 
 Exposes the data connectors as REST endpoints for:
+- Enrichment: integrated pipeline (URL → area stats → rent estimate)
 - URL preview (metadata extraction from property listing URLs)
+- Area statistics (built-in market data)
 - Market data (MLIT transaction prices)
 - Rent estimation
 """
@@ -10,12 +12,61 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.config import settings
+from app.connectors.area_stats import AreaStatsConnector
+from app.connectors.enrichment import enrich_from_property_data, enrich_from_url
 from app.connectors.mlit_transaction import MLITTransactionConnector
 from app.connectors.rent_estimator import RentEstimatorConnector
 from app.connectors.url_preview import URLPreviewConnector
 
 router = APIRouter(prefix="/connectors", tags=["connectors"])
 
+
+# ===================================================================
+# Integrated Enrichment (main entry point for frontend)
+# ===================================================================
+
+class EnrichFromURLRequest(BaseModel):
+    url: str = Field(..., min_length=1)
+
+
+class EnrichFromDataRequest(BaseModel):
+    price_jpy: int = Field(..., gt=0)
+    station_name: str = ""
+    address_text: str = ""
+    floor_area_sqm: float | None = None
+    built_year: int | None = None
+    walking_minutes: int | None = None
+
+
+@router.post("/enrich-url")
+async def enrich_url(body: EnrichFromURLRequest):
+    """Integrated enrichment: URL → property data → area stats → rent estimate.
+
+    This is the primary endpoint the frontend should use.
+    Chains all available data sources to build a complete picture.
+    """
+    return await enrich_from_url(body.url)
+
+
+@router.post("/enrich-data")
+async def enrich_data(body: EnrichFromDataRequest):
+    """Enrichment from manually entered property data (no URL needed).
+
+    Use this when the user enters data directly instead of pasting a URL.
+    """
+    return await enrich_from_property_data(
+        price_jpy=body.price_jpy,
+        station_name=body.station_name,
+        address_text=body.address_text,
+        floor_area_sqm=body.floor_area_sqm,
+        built_year=body.built_year,
+        walking_minutes=body.walking_minutes,
+    )
+
+
+# ===================================================================
+# Individual connector endpoints (for direct access / debugging)
+# ===================================================================
 
 # --- URL Preview ---
 
@@ -35,6 +86,26 @@ async def url_preview(body: URLPreviewRequest):
     connector = URLPreviewConnector()
     result = await connector.fetch(url=body.url)
     return URLPreviewResponse(success=result.success, data=result.data, errors=result.errors)
+
+
+# --- Area Statistics ---
+
+class AreaStatsRequest(BaseModel):
+    station_name: str = ""
+    city_name: str = ""
+    address_text: str = ""
+
+
+@router.post("/area-stats")
+async def area_stats(body: AreaStatsRequest):
+    """Look up built-in area market statistics."""
+    connector = AreaStatsConnector()
+    result = await connector.fetch(
+        station_name=body.station_name,
+        city_name=body.city_name,
+        address_text=body.address_text,
+    )
+    return {"success": result.success, "data": result.data, "errors": result.errors}
 
 
 # --- Market Data (MLIT) ---

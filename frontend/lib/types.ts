@@ -132,6 +132,13 @@ export interface URLPreviewResponse {
     hint_layout?: string;
     hint_walking_minutes?: number;
     hint_station_name?: string;
+    hint_built_year?: number;
+    hint_address_text?: string;
+    hint_management_fee_jpy?: number;
+    hint_repair_reserve_jpy?: number;
+    hint_total_units?: number;
+    hint_floor_number?: number;
+    hint_total_floors?: number;
   };
   errors: string[];
 }
@@ -143,4 +150,53 @@ export interface RentEstimateResponse {
   high_estimate: number;
   gross_yield: number;
   method: string;
+}
+
+export interface AreaStats {
+  area_name: string;
+  prefecture: string;
+  avg_unit_price_sqm: number;
+  avg_price_70sqm: number;
+  avg_rent_per_sqm: number;
+  avg_gross_yield: number;
+  transaction_count_annual: number;
+  price_trend: string;
+  population_trend: string;
+  source: string;
+  note?: string;
+}
+
+export interface MarketComparison {
+  your_price_70sqm_normalized: number;
+  area_avg_70sqm: number;
+  diff_percent: number;
+  assessment: string;
+}
+
+export interface EnrichmentResult {
+  url?: string;
+  title?: string;
+  description?: string;
+  image?: string;
+  sources_used: string[];
+  errors: string[];
+  // Hints from URL
+  hint_price_jpy?: number;
+  hint_floor_area_sqm?: number;
+  hint_layout?: string;
+  hint_walking_minutes?: number;
+  hint_station_name?: string;
+  hint_built_year?: number;
+  hint_address_text?: string;
+  hint_management_fee_jpy?: number;
+  hint_repair_reserve_jpy?: number;
+  hint_total_units?: number;
+  hint_floor_number?: number;
+  hint_total_floors?: number;
+  // Enriched data
+  area_stats?: AreaStats;
+  rent_estimate?: RentEstimateResponse;
+  market_comparison?: MarketComparison;
+  url_preview?: Record<string, unknown>;
+  mlit_data?: Record<string, unknown>;
 }

@@ -124,3 +124,42 @@ export async function enrichFromData(params: {
 }): Promise<EnrichmentResult> {
   return request("/connectors/enrich-data", { method: "POST", body: JSON.stringify(params) });
 }
+
+// --- Area Search ---
+
+export interface AreaSearchListing {
+  url: string;
+  name?: string;
+  price_jpy?: number;
+  price_text?: string;
+  layout?: string;
+  floor_area_sqm?: number;
+  station_name?: string;
+  walking_minutes?: number;
+  built_year?: number;
+  age_years?: number;
+  floor?: string;
+  estimated_rent?: number;
+  gross_yield?: number;
+  vs_market_pct?: number;
+  vs_market?: string;
+  parse_method?: string;
+}
+
+export interface AreaSearchResult {
+  success: boolean;
+  search_url: string;
+  total_found: number;
+  listings: AreaSearchListing[];
+  area_stats: import("./types").AreaStats | null;
+  errors: string[];
+}
+
+export async function searchArea(params: {
+  station_name?: string;
+  city_name?: string;
+  search_url?: string;
+  max_pages?: number;
+}): Promise<AreaSearchResult> {
+  return request("/connectors/area-search", { method: "POST", body: JSON.stringify(params) });
+}

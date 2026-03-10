@@ -16,6 +16,7 @@ from app.connectors.area_stats import AreaStatsConnector
 from app.connectors.enrichment import enrich_from_property_data, enrich_from_url
 from app.connectors.mlit_transaction import MLITTransactionConnector
 from app.connectors.rent_estimator import RentEstimatorConnector
+from app.connectors.suumo_search import SuumoSearchConnector
 from app.connectors.url_preview import URLPreviewConnector
 
 router = APIRouter(prefix="/connectors", tags=["connectors"])
@@ -62,6 +63,94 @@ async def enrich_data(body: EnrichFromDataRequest):
         built_year=body.built_year,
         walking_minutes=body.walking_minutes,
     )
+
+
+# ===================================================================
+# Area Search (SUUMO listings + enrichment)
+# ===================================================================
+
+class AreaSearchRequest(BaseModel):
+    station_name: str = ""
+    city_name: str = ""
+    search_url: str = ""
+    max_pages: int = Field(default=2, ge=1, le=5)
+
+
+@router.post("/area-search")
+async def area_search(body: AreaSearchRequest):
+    """Search SUUMO for property listings in a given area.
+
+    Returns a list of properties with basic info (price, area, layout, etc.)
+    plus area market statistics for context.
+
+    Example: station_name="塚口" → fetches all chuko mansion listings near 塚口
+    """
+    connector = SuumoSearchConnector()
+    search_result = await connector.fetch(
+        station_name=body.station_name,
+        city_name=body.city_name,
+        search_url=body.search_url,
+        max_pages=body.max_pages,
+    )
+
+    # Also fetch area stats for context
+    area_connector = AreaStatsConnector()
+    area_result = await area_connector.fetch(
+        station_name=body.station_name,
+        city_name=body.city_name,
+    )
+
+    # Enrich listings with rent estimates if we have area data
+    listings = search_result.data.get("listings", [])
+    enriched_listings = []
+
+    rent_connector = RentEstimatorConnector()
+    prefecture = area_result.data.get("prefecture", "") if area_result.success else ""
+    area_avg_unit = area_result.data.get("avg_unit_price_sqm") if area_result.success else None
+    avg_70 = area_result.data.get("avg_price_70sqm", 0) if area_result.success else 0
+
+    for listing in listings:
+        price = listing.get("price_jpy")
+        if price and price > 0:
+            # Rent estimate
+            try:
+                rent_result = await rent_connector.fetch(
+                    price_jpy=price,
+                    floor_area_sqm=listing.get("floor_area_sqm"),
+                    built_year=listing.get("built_year"),
+                    walking_minutes=listing.get("walking_minutes"),
+                    prefecture=prefecture,
+                    area_avg_unit_price=area_avg_unit,
+                )
+                if rent_result.success:
+                    listing["estimated_rent"] = rent_result.data["estimated_rent"]
+                    listing["gross_yield"] = rent_result.data["gross_yield"]
+            except Exception:
+                pass
+
+            # Market comparison
+            if avg_70 > 0:
+                area_sqm = listing.get("floor_area_sqm", 70)
+                normalized = price * 70 / area_sqm if area_sqm else price
+                diff = round((normalized / avg_70 - 1) * 100, 1)
+                listing["vs_market_pct"] = diff
+                listing["vs_market"] = (
+                    "割安" if diff < -10
+                    else "相場並み" if diff < 10
+                    else "やや割高" if diff < 20
+                    else "割高"
+                )
+
+        enriched_listings.append(listing)
+
+    return {
+        "success": search_result.success,
+        "search_url": search_result.data.get("search_url", ""),
+        "total_found": len(enriched_listings),
+        "listings": enriched_listings,
+        "area_stats": area_result.data if area_result.success else None,
+        "errors": search_result.errors + (area_result.errors if not area_result.success else []),
+    }
 
 
 # ===================================================================

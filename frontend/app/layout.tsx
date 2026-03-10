@@ -22,6 +22,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 Home Decision OS
               </Link>
               <div className="flex items-center gap-4">
+                <Link href="/search" className="text-sm text-gray-600 hover:text-primary-600 transition-colors font-medium">
+                  エリア検索
+                </Link>
                 <Link href="/" className="text-sm text-gray-600 hover:text-primary-600 transition-colors">
                   物件一覧
                 </Link>

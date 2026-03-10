@@ -152,6 +152,7 @@ class ExitScoreRead(BaseModel):
     hazard_score: int
     liquidity_score: int
     total_score: int
+    assessment: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

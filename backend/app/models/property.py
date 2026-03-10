@@ -103,6 +103,7 @@ class ExitScore(Base):
     hazard_score: Mapped[int] = mapped_column(Integer)
     liquidity_score: Mapped[int] = mapped_column(Integer)
     total_score: Mapped[int] = mapped_column(Integer)
+    assessment: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

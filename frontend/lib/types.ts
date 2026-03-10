@@ -103,6 +103,7 @@ export interface ExitScore {
   hazard_score: number;
   liquidity_score: number;
   total_score: number;
+  assessment: string | null;
   created_at: string;
 }
 
@@ -150,6 +151,7 @@ export interface RentEstimateResponse {
   high_estimate: number;
   gross_yield: number;
   method: string;
+  confidence?: string;
 }
 
 export interface AreaStats {

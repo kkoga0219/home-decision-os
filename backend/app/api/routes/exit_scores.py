@@ -37,6 +37,7 @@ def calculate(property_id: int, db: Session = Depends(get_db)):
         hazard_score=result.hazard_score,
         liquidity_score=result.liquidity_score,
         total_score=result.total_score,
+        assessment=result.assessment,
     )
     return score
 

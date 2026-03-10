@@ -16,6 +16,7 @@ from app.connectors.area_stats import AreaStatsConnector
 from app.connectors.enrichment import enrich_from_property_data, enrich_from_url
 from app.connectors.mlit_transaction import MLITTransactionConnector
 from app.connectors.rent_estimator import RentEstimatorConnector
+from app.connectors.suumo_market import SuumoMarketConnector
 from app.connectors.suumo_search import SuumoSearchConnector
 from app.connectors.url_preview import URLPreviewConnector
 
@@ -100,7 +101,24 @@ async def area_search(body: AreaSearchRequest):
         city_name=body.city_name,
     )
 
-    # Enrich listings with rent estimates if we have area data
+    # Fetch SUUMO real market data for better rent estimates
+    rental_market_data = None
+    suumo_market_data = None
+    market_errors: list[str] = []
+    try:
+        market_connector = SuumoMarketConnector()
+        market_result = await market_connector.fetch(
+            station_name=body.station_name,
+            city_name=body.city_name,
+        )
+        if market_result.success:
+            suumo_market_data = market_result.data
+            rental_market_data = market_result.data.get("rental_market")
+        market_errors = market_result.errors
+    except Exception:
+        pass
+
+    # Enrich listings with rent estimates
     listings = search_result.data.get("listings", [])
     enriched_listings = []
 
@@ -112,7 +130,7 @@ async def area_search(body: AreaSearchRequest):
     for listing in listings:
         price = listing.get("price_jpy")
         if price and price > 0:
-            # Rent estimate
+            # Rent estimate (using SUUMO real data when available)
             try:
                 rent_result = await rent_connector.fetch(
                     price_jpy=price,
@@ -121,10 +139,13 @@ async def area_search(body: AreaSearchRequest):
                     walking_minutes=listing.get("walking_minutes"),
                     prefecture=prefecture,
                     area_avg_unit_price=area_avg_unit,
+                    layout=listing.get("layout", ""),
+                    rental_market_data=rental_market_data,
                 )
                 if rent_result.success:
                     listing["estimated_rent"] = rent_result.data["estimated_rent"]
                     listing["gross_yield"] = rent_result.data["gross_yield"]
+                    listing["rent_confidence"] = rent_result.data.get("confidence", "low")
             except Exception:
                 pass
 
@@ -143,13 +164,18 @@ async def area_search(body: AreaSearchRequest):
 
         enriched_listings.append(listing)
 
+    all_errors = search_result.errors + market_errors
+    if not area_result.success:
+        all_errors.extend(area_result.errors)
+
     return {
         "success": search_result.success,
         "search_url": search_result.data.get("search_url", ""),
         "total_found": len(enriched_listings),
         "listings": enriched_listings,
         "area_stats": area_result.data if area_result.success else None,
-        "errors": search_result.errors + (area_result.errors if not area_result.success else []),
+        "suumo_market": suumo_market_data,
+        "errors": all_errors,
     }
 
 
@@ -262,6 +288,7 @@ class RentEstimateResponse(BaseModel):
     high_estimate: int
     gross_yield: float
     method: str
+    confidence: str = "low"
 
 
 @router.post("/rent-estimate", response_model=RentEstimateResponse)
@@ -285,4 +312,5 @@ async def rent_estimate(body: RentEstimateRequest):
         high_estimate=result.data["high_estimate"],
         gross_yield=result.data["gross_yield"],
         method=result.data["method"],
+        confidence=result.data.get("confidence", "low"),
     )

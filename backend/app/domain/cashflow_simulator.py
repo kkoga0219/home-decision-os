@@ -262,15 +262,32 @@ def simulate_cashflow(
     )
 
     # --- 固定資産税 ---
+    # マンションの固定資産税は戸建てより大幅に安い。理由:
+    #   1. 土地: マンション全体の敷地を戸数で按分 → 持分はごく小さい
+    #   2. 建物: 経年で評価額が下がる (RC造は築20年で新築時の60%程度)
+    #   3. 小規模住宅用地の特例: 固定資産税1/6, 都市計画税1/3
+    # 実態: 5000万の中古マンション → 年額10〜18万程度が一般的
+    #
+    # 概算ロジック:
+    #   建物評価額 ≒ 市場価格 × 40% × 経年減価 (築年数で按分)
+    #   土地評価額 ≒ 市場価格 × 15% (マンション按分後)
+    #   土地は小規模住宅用地の特例で固定1/6, 都計1/3
     if property_tax_annual is None:
-        assessed_value = int(price_jpy * ASSESSED_VALUE_RATIO)
-        # 小規模住宅用地の特例: 固定資産税1/6、都市計画税1/3
-        # マンションの場合、土地持分は少ないので簡略化
-        property_tax_annual = int(
-            assessed_value * (PROPERTY_TAX_RATE + CITY_PLANNING_TAX_RATE)
-        )
-        # 新築マンション5年間半額特例
-        # ただし中古は適用なし
+        # 建物部分
+        # RC造マンションの建物評価額: 市場価格の30%程度(新築時)
+        # 経年で逓減: 築20年で新築時の約50%, 下限は新築時の30%
+        age_factor = max(1.0 - building_age * 0.025, 0.30)
+        building_assessed = int(price_jpy * 0.30 * age_factor)
+        building_tax = int(building_assessed * (PROPERTY_TAX_RATE + CITY_PLANNING_TAX_RATE))
+
+        # 土地部分 (マンション按分後 + 小規模住宅用地の特例)
+        # マンションの土地持分は非常に小さい: 市場価格の10%程度
+        land_assessed = int(price_jpy * 0.10)
+        land_fixed_tax = int(land_assessed * PROPERTY_TAX_RATE / 6)     # 特例1/6
+        land_city_tax = int(land_assessed * CITY_PLANNING_TAX_RATE / 3)  # 特例1/3
+        land_tax = land_fixed_tax + land_city_tax
+
+        property_tax_annual = building_tax + land_tax
 
     # --- 減価償却 (投資シナリオ) ---
     annual_depreciation = 0

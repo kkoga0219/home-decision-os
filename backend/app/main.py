@@ -3,7 +3,15 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import cashflow, comparison, connectors, exit_scores, loan_scenarios, properties, rental_scenarios
+from app.api.routes import (
+    cashflow,
+    comparison,
+    connectors,
+    exit_scores,
+    loan_scenarios,
+    properties,
+    rental_scenarios,
+)
 from app.config import settings
 
 app = FastAPI(

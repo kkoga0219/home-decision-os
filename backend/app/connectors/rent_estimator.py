@@ -20,7 +20,6 @@ Tier 3: 利回りベース推定 (fallback)
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 from app.connectors.base import BaseConnector, ConnectorResult
 
@@ -149,7 +148,8 @@ class RentEstimatorConnector(BaseConnector):
         # -------------------------------------------------------
         if rental_market_data and rental_market_data.get("rents_by_layout"):
             estimate = self._tier1_suumo(
-                rental_market_data, layout, area, age_factor, station_factor, area_factor, price_jpy,
+                rental_market_data, layout, area,
+                age_factor, station_factor, area_factor, price_jpy,
             )
             if estimate:
                 return self._to_result(estimate)

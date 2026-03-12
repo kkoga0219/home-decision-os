@@ -250,7 +250,13 @@ def _parse_card(card_html: str, url: str) -> dict[str, Any] | None:
         m = re.search(r'<h[23][^>]*>([^<]{3,40})</h[23]>', card_html)
     if not m:
         # Try from text: first substantial text before price
-        m = re.search(r'([ぁ-んァ-ヶ一-龠Ａ-Ｚａ-ｚ\w]{2,30}(?:マンション|レジデンス|ハウス|タワー|コート|パーク|プラウド|グラン|ルネ|ライオンズ|サーパス|エスリード|ワコーレ|アドリーム|ジオ|ブランズ))', text)
+        _name_re = (
+            r'([ぁ-んァ-ヶ一-龠Ａ-Ｚａ-ｚ\w]{2,30}'
+            r'(?:マンション|レジデンス|ハウス|タワー|コート|パーク'
+            r'|プラウド|グラン|ルネ|ライオンズ|サーパス|エスリード'
+            r'|ワコーレ|アドリーム|ジオ|ブランズ))'
+        )
+        m = re.search(_name_re, text)
     if m:
         info["name"] = m.group(1).strip()
 

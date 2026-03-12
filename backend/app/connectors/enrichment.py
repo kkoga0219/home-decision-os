@@ -18,7 +18,6 @@ import logging
 from typing import Any
 
 from app.connectors.area_stats import AreaStatsConnector
-from app.connectors.base import ConnectorResult
 from app.connectors.rent_estimator import RentEstimatorConnector
 from app.connectors.url_preview import URLPreviewConnector
 from app.config import settings

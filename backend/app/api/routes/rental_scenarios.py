@@ -4,7 +4,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.domain.mortgage import calc_monthly_payment
 from app.domain.ownership_cost import calc_ownership_cost
 from app.domain.rental_cashflow import calc_rental_cashflow
 from app.repositories import property_repo

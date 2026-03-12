@@ -25,7 +25,6 @@
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -217,7 +216,10 @@ def simulate_cashflow(
     is_new = building_age <= 2
 
     if tax_credit_years is None:
-        tax_credit_years = DEFAULT_TAX_CREDIT_YEARS_NEW if is_new else DEFAULT_TAX_CREDIT_YEARS_USED
+        tax_credit_years = (
+            DEFAULT_TAX_CREDIT_YEARS_NEW if is_new
+            else DEFAULT_TAX_CREDIT_YEARS_USED
+        )
 
     # --- ローン計算 ---
     loan_amount = price_jpy - down_payment_jpy

@@ -156,9 +156,6 @@ def _parse_listing_page(html: str) -> list[dict[str, Any]]:
     """
     listings: list[dict[str, Any]] = []
 
-    # Strip tags for text parsing
-    body_text = _strip_tags(html)
-
     # Extract individual property links
     # Pattern: /ms/chuko/PREFECTURE/CITY/nc_DIGITS/
     detail_links = re.findall(

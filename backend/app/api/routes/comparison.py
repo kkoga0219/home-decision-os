@@ -32,7 +32,9 @@ def compare(body: ComparisonRequest, db: Session = Depends(get_db)):
         summaries.append(
             PropertySummary(
                 property=PropertyRead.model_validate(prop),
-                loan_scenarios=[LoanScenarioRead.model_validate(l) for l in prop.loan_scenarios],
+                loan_scenarios=[
+                    LoanScenarioRead.model_validate(ls) for ls in prop.loan_scenarios
+                ],
                 rental_scenarios=[
                     RentalScenarioRead.model_validate(r) for r in prop.rental_scenarios
                 ],

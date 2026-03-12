@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.domain.cashflow_simulator import simulate_cashflow, result_to_dict
+from app.domain.cashflow_simulator import result_to_dict, simulate_cashflow
 from app.repositories import property_repo
 
 router = APIRouter(prefix="/cashflow", tags=["cashflow"])

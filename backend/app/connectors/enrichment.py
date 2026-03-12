@@ -17,10 +17,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.config import settings
 from app.connectors.area_stats import AreaStatsConnector
 from app.connectors.rent_estimator import RentEstimatorConnector
 from app.connectors.url_preview import URLPreviewConnector
-from app.config import settings
 
 logger = logging.getLogger(__name__)
 

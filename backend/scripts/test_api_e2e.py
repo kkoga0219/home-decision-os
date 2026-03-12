@@ -12,7 +12,6 @@ Usage (ローカルで実行):
 """
 
 import json
-import sys
 
 import httpx
 

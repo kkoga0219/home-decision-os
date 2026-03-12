@@ -157,7 +157,9 @@ def _parse_suumo_deep(html: str, title: str, description: str) -> dict[str, Any]
         hints["hint_layout"] = layout.upper()
 
     # --- Walking minutes ---
-    m = re.search(r"徒歩\s*(\d+)\s*分", body_text) or re.search(r"徒歩\s*(\d+)\s*分", combined_meta)
+    m = re.search(r"徒歩\s*(\d+)\s*分", body_text) or re.search(
+        r"徒歩\s*(\d+)\s*分", combined_meta
+    )
     if m:
         hints["hint_walking_minutes"] = int(m.group(1))
 
@@ -190,7 +192,10 @@ def _parse_suumo_deep(html: str, title: str, description: str) -> dict[str, Any]
         hints["hint_address_text"] = m.group(1).strip()
     elif description:
         # Try to extract prefecture+city from description
-        m = re.search(r"((?:東京都|北海道|(?:大阪|京都)府|.{2,3}県).{2,15}?[市区町村])", combined_meta)
+        m = re.search(
+            r"((?:東京都|北海道|(?:大阪|京都)府|.{2,3}県).{2,15}?[市区町村])",
+            combined_meta,
+        )
         if m:
             hints["hint_address_text"] = m.group(1)
 
@@ -230,7 +235,6 @@ def _parse_suumo_deep(html: str, title: str, description: str) -> dict[str, Any]
 def _parse_lifull_hints(html: str, title: str, description: str) -> dict[str, Any]:
     """Parse LIFULL HOME'S property pages."""
     body_text = _strip_tags(html)
-    combined = f"{title} {description} {body_text}"
     return _parse_generic_hints(title, description, body_text)
 
 

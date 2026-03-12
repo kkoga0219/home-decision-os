@@ -259,7 +259,10 @@ class RentEstimatorConnector(BaseConnector):
             low_estimate=int(blended * 0.85),
             high_estimate=int(blended * 1.15),
             gross_yield=round(adjusted_yield, 4),
-            method=f"相場ブレンド推定 (利回り{adjusted_yield:.1%} + ㎡単価{area_avg_unit_price:,}円)",
+            method=(
+                f"相場ブレンド推定 (利回り{adjusted_yield:.1%}"
+                f" + ㎡単価{area_avg_unit_price:,}円)"
+            ),
             confidence="medium",
         )
 

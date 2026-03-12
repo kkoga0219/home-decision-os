@@ -1,6 +1,6 @@
 """CRUD repository for Property and related models."""
 
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import joinedload, Session
 
 from app.models.property import ExitScore, LoanScenario, Property, RentalScenario
 

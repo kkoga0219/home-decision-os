@@ -13,19 +13,37 @@ import { useRouter } from "next/navigation";
 /* ------------------------------------------------------------------ */
 
 const PRESET_AREAS = [
-  { label: "塚口", station: "塚口" },
-  { label: "武庫之荘", station: "武庫之荘" },
-  { label: "立花", station: "立花" },
-  { label: "西宮北口", station: "西宮北口" },
-  { label: "尼崎市全域", city: "尼崎市" },
-  { label: "西宮市全域", city: "西宮市" },
+  { label: "塚口", station: "塚口", pref: "兵庫県" },
+  { label: "武庫之荘", station: "武庫之荘", pref: "兵庫県" },
+  { label: "立花", station: "立花", pref: "兵庫県" },
+  { label: "西宮北口", station: "西宮北口", pref: "兵庫県" },
+  { label: "尼崎市全域", city: "尼崎市", pref: "兵庫県" },
+  { label: "西宮市全域", city: "西宮市", pref: "兵庫県" },
+  { label: "梅田", station: "梅田", pref: "大阪府" },
+  { label: "江坂", station: "江坂", pref: "大阪府" },
+  { label: "豊中市", city: "豊中市", pref: "大阪府" },
 ];
 
-const ALL_STATIONS = [
-  "塚口", "武庫之荘", "立花", "尼崎", "園田",
-  "西宮北口", "夙川", "甲子園", "芦屋", "伊丹",
-  "三宮", "六甲道", "住吉",
+const PREFECTURES = [
+  "兵庫県", "大阪府", "京都府", "東京都", "神奈川県",
+  "埼玉県", "千葉県", "愛知県", "福岡県", "広島県",
+  "宮城県", "北海道", "奈良県", "滋賀県",
 ];
+
+// Grouped by prefecture for multi-station filter
+const STATION_GROUPS: Record<string, string[]> = {
+  "兵庫県": [
+    "塚口", "武庫之荘", "立花", "尼崎", "園田",
+    "西宮北口", "夙川", "甲子園", "芦屋", "伊丹",
+    "三宮", "六甲道", "住吉", "宝塚", "明石", "姫路",
+  ],
+  "大阪府": [
+    "梅田", "難波", "天王寺", "新大阪", "本町", "心斎橋",
+    "京橋", "十三", "江坂", "千里中央", "豊中", "池田",
+    "箕面", "茨木", "高槻", "堺",
+  ],
+  "京都府": ["京都", "四条", "河原町", "烏丸", "宇治"],
+};
 
 const LAYOUT_OPTIONS = [
   "1K", "1DK", "1LDK", "2K", "2DK", "2LDK",
@@ -138,6 +156,7 @@ export default function AreaSearchPage() {
   const router = useRouter();
   const [station, setStation] = useState("");
   const [city, setCity] = useState("");
+  const [prefecture, setPrefecture] = useState("兵庫県");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AreaSearchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -185,9 +204,14 @@ export default function AreaSearchPage() {
     );
   }
 
-  async function handleSearch(stationOverride?: string, cityOverride?: string) {
+  async function handleSearch(
+    stationOverride?: string,
+    cityOverride?: string,
+    prefOverride?: string,
+  ) {
     const s = stationOverride ?? station;
     const c = cityOverride ?? city;
+    const p = prefOverride ?? prefecture;
     // Allow search if we have station/city OR multi-station filter
     if (!s && !c && filters.stations.length === 0) return;
 
@@ -199,6 +223,7 @@ export default function AreaSearchPage() {
       const params: AreaSearchParams = {
         station_name: filters.stations.length > 0 ? "" : s,
         city_name: c,
+        prefecture: p,
         max_pages: 3,
       };
 
@@ -227,7 +252,8 @@ export default function AreaSearchPage() {
   function handlePreset(preset: typeof PRESET_AREAS[0]) {
     setStation(preset.station ?? "");
     setCity(preset.city ?? "");
-    handleSearch(preset.station, preset.city);
+    if (preset.pref) setPrefecture(preset.pref);
+    handleSearch(preset.station, preset.city, preset.pref);
   }
 
   async function handleRegister(listing: AreaSearchListing) {
@@ -270,13 +296,25 @@ export default function AreaSearchPage() {
       {/* Search bar */}
       <div className="bg-white rounded-lg shadow-sm p-5 mb-4">
         <div className="flex gap-3 mb-4">
+          <div className="w-32 shrink-0">
+            <label className="block text-sm font-medium text-gray-600 mb-1">都道府県</label>
+            <select
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+              value={prefecture}
+              onChange={(e) => setPrefecture(e.target.value)}
+            >
+              {PREFECTURES.map((p) => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+          </div>
           <div className="flex-1">
             <label className="block text-sm font-medium text-gray-600 mb-1">駅名</label>
             <input
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
               value={station}
               onChange={(e) => setStation(e.target.value)}
-              placeholder="例: 塚口"
+              placeholder="例: 塚口、梅田、渋谷..."
               onKeyDown={(e) => e.key === "Enter" && handleSearch()}
               disabled={filters.stations.length > 0}
             />
@@ -287,7 +325,7 @@ export default function AreaSearchPage() {
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
               value={city}
               onChange={(e) => setCity(e.target.value)}
-              placeholder="例: 尼崎市"
+              placeholder="例: 尼崎市、大阪市、世田谷区..."
               onKeyDown={(e) => e.key === "Enter" && handleSearch()}
             />
           </div>
@@ -452,7 +490,7 @@ export default function AreaSearchPage() {
             </div>
           </div>
 
-          {/* Multi-station chips */}
+          {/* Multi-station chips (grouped by prefecture) */}
           <div className="mt-4">
             <label className="block text-xs font-medium text-gray-500 mb-1.5">
               駅を複数選択
@@ -460,21 +498,26 @@ export default function AreaSearchPage() {
                 <span className="ml-2 text-blue-600">({filters.stations.length}駅)</span>
               )}
             </label>
-            <div className="flex flex-wrap gap-2">
-              {ALL_STATIONS.map((stn) => (
-                <button
-                  key={stn}
-                  onClick={() => toggleStation(stn)}
-                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors border ${
-                    filters.stations.includes(stn)
-                      ? "bg-blue-600 text-white border-blue-600"
-                      : "bg-white text-gray-600 border-gray-300 hover:border-blue-400"
-                  }`}
-                >
-                  {stn}
-                </button>
-              ))}
-            </div>
+            {Object.entries(STATION_GROUPS).map(([pref, stns]) => (
+              <div key={pref} className="mb-2">
+                <span className="text-[11px] text-gray-400 mr-2">{pref}:</span>
+                <div className="inline-flex flex-wrap gap-1.5">
+                  {stns.map((stn) => (
+                    <button
+                      key={stn}
+                      onClick={() => toggleStation(stn)}
+                      className={`px-2.5 py-0.5 rounded-full text-xs font-medium transition-colors border ${
+                        filters.stations.includes(stn)
+                          ? "bg-blue-600 text-white border-blue-600"
+                          : "bg-white text-gray-600 border-gray-300 hover:border-blue-400"
+                      }`}
+                    >
+                      {stn}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
             {filters.stations.length > 0 && (
               <p className="text-[11px] text-gray-400 mt-1">複数駅を選択すると、それぞれの駅の結果を統合して表示します</p>
             )}

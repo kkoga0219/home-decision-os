@@ -8,9 +8,10 @@ Parses listing cards using SUUMO's actual HTML structure:
   - .property_unit-body a   → detail page link
 
 Supported search modes:
-1. By station name (e.g. 塚口) → searches chuko mansion listings
-2. By city (e.g. 尼崎市) → searches by city code
-3. By direct SUUMO search URL
+1. By station/keyword (any area in Japan)
+2. By city (mapped to SUUMO sc_ codes)
+3. By prefecture + keyword (dynamic)
+4. By direct SUUMO search URL
 """
 
 from __future__ import annotations
@@ -34,32 +35,179 @@ HEADERS = {
     "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
 }
 
-# City code mapping for SUUMO search URLs (兵庫県)
-CITY_CODES: dict[str, str] = {
-    "尼崎市": "sc_amagasaki",
-    "西宮市": "sc_nishinomiya",
-    "神戸市": "sc_kobe",
-    "芦屋市": "sc_ashiya",
-    "伊丹市": "sc_itami",
-    "宝塚市": "sc_takarazuka",
-    "川西市": "sc_kawanishi",
+# ---------------------------------------------------------------------------
+# Prefecture → SUUMO URL slug
+# ---------------------------------------------------------------------------
+PREFECTURE_SLUGS: dict[str, str] = {
+    "北海道": "hokkaido", "青森県": "aomori", "岩手県": "iwate",
+    "宮城県": "miyagi", "秋田県": "akita", "山形県": "yamagata",
+    "福島県": "fukushima", "茨城県": "ibaraki", "栃木県": "tochigi",
+    "群馬県": "gunma", "埼玉県": "saitama", "千葉県": "chiba",
+    "東京都": "tokyo", "神奈川県": "kanagawa", "新潟県": "niigata",
+    "富山県": "toyama", "石川県": "ishikawa", "福井県": "fukui",
+    "山梨県": "yamanashi", "長野県": "nagano", "岐阜県": "gifu",
+    "静岡県": "shizuoka", "愛知県": "aichi", "三重県": "mie",
+    "滋賀県": "shiga", "京都府": "kyoto", "大阪府": "osaka",
+    "兵庫県": "hyogo", "奈良県": "nara", "和歌山県": "wakayama",
+    "鳥取県": "tottori", "島根県": "shimane", "岡山県": "okayama",
+    "広島県": "hiroshima", "山口県": "yamaguchi",
+    "徳島県": "tokushima", "香川県": "kagawa",
+    "愛媛県": "ehime", "高知県": "kochi",
+    "福岡県": "fukuoka", "佐賀県": "saga", "長崎県": "nagasaki",
+    "熊本県": "kumamoto", "大分県": "oita",
+    "宮崎県": "miyazaki", "鹿児島県": "kagoshima",
+    "沖縄県": "okinawa",
 }
 
-# Station name → SUUMO search keyword mapping
-STATION_SEARCH_AREAS: dict[str, str] = {
-    "塚口": "sc_amagasaki",
-    "武庫之荘": "sc_amagasaki",
-    "立花": "sc_amagasaki",
-    "尼崎": "sc_amagasaki",
-    "園田": "sc_amagasaki",
-    "西宮北口": "sc_nishinomiya",
-    "夙川": "sc_nishinomiya",
-    "甲子園": "sc_nishinomiya",
-    "三宮": "sc_kobe",
-    "六甲道": "sc_kobe",
-    "住吉": "sc_kobe",
-    "芦屋": "sc_ashiya",
-    "伊丹": "sc_itami",
+# Short names without 県/府/都/道 → full name
+_PREF_SHORT: dict[str, str] = {}
+for _full in PREFECTURE_SLUGS:
+    _short = _full.rstrip("都道府県")
+    _PREF_SHORT[_short] = _full
+
+# ---------------------------------------------------------------------------
+# City code mapping (prefecture_slug, sc_code)
+# Covers major cities; unknown cities use keyword fallback
+# ---------------------------------------------------------------------------
+CITY_DB: dict[str, tuple[str, str]] = {
+    # --- 兵庫県 ---
+    "尼崎市": ("hyogo", "sc_amagasaki"),
+    "西宮市": ("hyogo", "sc_nishinomiya"),
+    "神戸市": ("hyogo", "sc_kobe"),
+    "芦屋市": ("hyogo", "sc_ashiya"),
+    "伊丹市": ("hyogo", "sc_itami"),
+    "宝塚市": ("hyogo", "sc_takarazuka"),
+    "川西市": ("hyogo", "sc_kawanishi"),
+    "明石市": ("hyogo", "sc_akashi"),
+    "姫路市": ("hyogo", "sc_himeji"),
+    "加古川市": ("hyogo", "sc_kakogawa"),
+    "三田市": ("hyogo", "sc_sanda"),
+    # --- 大阪府 ---
+    "大阪市": ("osaka", "sc_osaka"),
+    "堺市": ("osaka", "sc_sakai"),
+    "豊中市": ("osaka", "sc_toyonaka"),
+    "吹田市": ("osaka", "sc_suita"),
+    "茨木市": ("osaka", "sc_ibaraki"),
+    "高槻市": ("osaka", "sc_takatsuki"),
+    "枚方市": ("osaka", "sc_hirakata"),
+    "東大阪市": ("osaka", "sc_higashiosaka"),
+    "八尾市": ("osaka", "sc_yao"),
+    "池田市": ("osaka", "sc_ikeda"),
+    "箕面市": ("osaka", "sc_minoo"),
+    "守口市": ("osaka", "sc_moriguchi"),
+    "寝屋川市": ("osaka", "sc_neyagawa"),
+    "門真市": ("osaka", "sc_kadoma"),
+    "岸和田市": ("osaka", "sc_kishiwada"),
+    # --- 京都府 ---
+    "京都市": ("kyoto", "sc_kyoto"),
+    "宇治市": ("kyoto", "sc_uji"),
+    "長岡京市": ("kyoto", "sc_nagaokakyo"),
+    # --- 東京都 ---
+    "千代田区": ("tokyo", "sc_chiyoda"),
+    "中央区": ("tokyo", "sc_chuo"),
+    "港区": ("tokyo", "sc_minato"),
+    "新宿区": ("tokyo", "sc_shinjuku"),
+    "渋谷区": ("tokyo", "sc_shibuya"),
+    "品川区": ("tokyo", "sc_shinagawa"),
+    "目黒区": ("tokyo", "sc_meguro"),
+    "世田谷区": ("tokyo", "sc_setagaya"),
+    "大田区": ("tokyo", "sc_ota"),
+    "杉並区": ("tokyo", "sc_suginami"),
+    "豊島区": ("tokyo", "sc_toshima"),
+    "板橋区": ("tokyo", "sc_itabashi"),
+    "練馬区": ("tokyo", "sc_nerima"),
+    "北区": ("tokyo", "sc_kita"),
+    "足立区": ("tokyo", "sc_adachi"),
+    "江東区": ("tokyo", "sc_koto"),
+    "墨田区": ("tokyo", "sc_sumida"),
+    "台東区": ("tokyo", "sc_taito"),
+    "文京区": ("tokyo", "sc_bunkyo"),
+    "荒川区": ("tokyo", "sc_arakawa"),
+    "中野区": ("tokyo", "sc_nakano"),
+    "八王子市": ("tokyo", "sc_hachioji"),
+    "町田市": ("tokyo", "sc_machida"),
+    "武蔵野市": ("tokyo", "sc_musashino"),
+    "三鷹市": ("tokyo", "sc_mitaka"),
+    "府中市": ("tokyo", "sc_fuchu"),
+    "調布市": ("tokyo", "sc_chofu"),
+    # --- 神奈川県 ---
+    "横浜市": ("kanagawa", "sc_yokohama"),
+    "川崎市": ("kanagawa", "sc_kawasaki"),
+    "相模原市": ("kanagawa", "sc_sagamihara"),
+    "藤沢市": ("kanagawa", "sc_fujisawa"),
+    "鎌倉市": ("kanagawa", "sc_kamakura"),
+    # --- 埼玉県 ---
+    "さいたま市": ("saitama", "sc_saitama"),
+    "川口市": ("saitama", "sc_kawaguchi"),
+    "所沢市": ("saitama", "sc_tokorozawa"),
+    "川越市": ("saitama", "sc_kawagoe"),
+    # --- 千葉県 ---
+    "千葉市": ("chiba", "sc_chiba"),
+    "船橋市": ("chiba", "sc_funabashi"),
+    "市川市": ("chiba", "sc_ichikawa"),
+    "松戸市": ("chiba", "sc_matsudo"),
+    "柏市": ("chiba", "sc_kashiwa"),
+    # --- 愛知県 ---
+    "名古屋市": ("aichi", "sc_nagoya"),
+    # --- 福岡県 ---
+    "福岡市": ("fukuoka", "sc_fukuoka"),
+    "北九州市": ("fukuoka", "sc_kitakyushu"),
+    # --- 広島県 ---
+    "広島市": ("hiroshima", "sc_hiroshima"),
+    # --- 宮城県 ---
+    "仙台市": ("miyagi", "sc_sendai"),
+    # --- 北海道 ---
+    "札幌市": ("hokkaido", "sc_sapporo"),
+}
+
+# Station → (prefecture_slug, city_sc_code)
+# Common stations; for unlisted ones, keyword search is used
+STATION_DB: dict[str, tuple[str, str]] = {
+    # --- 兵庫県 (阪急神戸線・宝塚線 etc.) ---
+    "塚口": ("hyogo", "sc_amagasaki"),
+    "武庫之荘": ("hyogo", "sc_amagasaki"),
+    "立花": ("hyogo", "sc_amagasaki"),
+    "尼崎": ("hyogo", "sc_amagasaki"),
+    "園田": ("hyogo", "sc_amagasaki"),
+    "西宮北口": ("hyogo", "sc_nishinomiya"),
+    "夙川": ("hyogo", "sc_nishinomiya"),
+    "甲子園": ("hyogo", "sc_nishinomiya"),
+    "三宮": ("hyogo", "sc_kobe"),
+    "六甲道": ("hyogo", "sc_kobe"),
+    "住吉": ("hyogo", "sc_kobe"),
+    "芦屋": ("hyogo", "sc_ashiya"),
+    "伊丹": ("hyogo", "sc_itami"),
+    "宝塚": ("hyogo", "sc_takarazuka"),
+    "川西能勢口": ("hyogo", "sc_kawanishi"),
+    "三田": ("hyogo", "sc_sanda"),
+    "明石": ("hyogo", "sc_akashi"),
+    "姫路": ("hyogo", "sc_himeji"),
+    # --- 大阪府 ---
+    "梅田": ("osaka", "sc_osaka"),
+    "難波": ("osaka", "sc_osaka"),
+    "天王寺": ("osaka", "sc_osaka"),
+    "新大阪": ("osaka", "sc_osaka"),
+    "本町": ("osaka", "sc_osaka"),
+    "心斎橋": ("osaka", "sc_osaka"),
+    "淀屋橋": ("osaka", "sc_osaka"),
+    "天満橋": ("osaka", "sc_osaka"),
+    "京橋": ("osaka", "sc_osaka"),
+    "十三": ("osaka", "sc_osaka"),
+    "江坂": ("osaka", "sc_suita"),
+    "千里中央": ("osaka", "sc_toyonaka"),
+    "豊中": ("osaka", "sc_toyonaka"),
+    "池田": ("osaka", "sc_ikeda"),
+    "箕面": ("osaka", "sc_minoo"),
+    "茨木": ("osaka", "sc_ibaraki"),
+    "高槻": ("osaka", "sc_takatsuki"),
+    "枚方市": ("osaka", "sc_hirakata"),
+    "堺": ("osaka", "sc_sakai"),
+    # --- 京都府 ---
+    "京都": ("kyoto", "sc_kyoto"),
+    "四条": ("kyoto", "sc_kyoto"),
+    "河原町": ("kyoto", "sc_kyoto"),
+    "烏丸": ("kyoto", "sc_kyoto"),
+    "宇治": ("kyoto", "sc_uji"),
 }
 
 
@@ -75,7 +223,8 @@ class SuumoSearchConnector(BaseConnector):
         station_name: str = "",
         city_name: str = "",
         search_url: str = "",
-        max_pages: int = 2,
+        prefecture: str = "",
+        max_pages: int = 3,
         price_min: int | None = None,
         price_max: int | None = None,
         area_min: float | None = None,
@@ -89,13 +238,16 @@ class SuumoSearchConnector(BaseConnector):
         Parameters
         ----------
         station_name : str
-            Station name to search near (e.g. "塚口")
+            Station name (any station in Japan)
         city_name : str
-            City name (e.g. "尼崎市")
+            City name (e.g. "尼崎市", "大阪市", "世田谷区")
         search_url : str
-            Direct SUUMO search URL (overrides station/city)
+            Direct SUUMO search URL (overrides everything)
+        prefecture : str
+            Prefecture name (e.g. "兵庫県", "大阪府")
+            Used with keyword search for unlisted stations
         max_pages : int
-            Maximum number of pages to fetch (default 2, ~40 listings)
+            Maximum number of pages to fetch (default 3)
         price_min, price_max : int | None
             Price range in 万円
         area_min : float | None
@@ -112,6 +264,7 @@ class SuumoSearchConnector(BaseConnector):
             return await self._fetch_multi_station(
                 stations=stations,
                 city_name=city_name,
+                prefecture=prefecture,
                 max_pages=max_pages,
                 price_min=price_min,
                 price_max=price_max,
@@ -120,30 +273,18 @@ class SuumoSearchConnector(BaseConnector):
                 age_max=age_max,
             )
 
-        # Determine search URL
-        if search_url:
-            base_url = search_url
-        elif station_name and station_name in STATION_SEARCH_AREAS:
-            area_code = STATION_SEARCH_AREAS[station_name]
-            base_url = (
-                f"https://suumo.jp/ms/chuko/hyogo/{area_code}/"
-            )
-        elif city_name and city_name in CITY_CODES:
-            area_code = CITY_CODES[city_name]
-            base_url = (
-                f"https://suumo.jp/ms/chuko/hyogo/{area_code}/"
-            )
-        else:
-            keyword = station_name or city_name
-            if not keyword:
-                return ConnectorResult(
-                    success=False,
-                    source=self.name,
-                    errors=["検索条件を指定してください"],
-                )
-            base_url = (
-                f"https://suumo.jp/ms/chuko/hyogo/sc_amagasaki/"
-                f"?rn={quote(keyword)}"
+        # Build search URL dynamically
+        base_url = self._resolve_search_url(
+            search_url=search_url,
+            station_name=station_name,
+            city_name=city_name,
+            prefecture=prefecture,
+        )
+        if base_url is None:
+            return ConnectorResult(
+                success=False,
+                source=self.name,
+                errors=["検索条件を指定してください"],
             )
 
         # Append SUUMO-native query filters
@@ -205,10 +346,79 @@ class SuumoSearchConnector(BaseConnector):
             errors=errors,
         )
 
+    @staticmethod
+    def _resolve_search_url(
+        *,
+        search_url: str = "",
+        station_name: str = "",
+        city_name: str = "",
+        prefecture: str = "",
+    ) -> str | None:
+        """Build a SUUMO search URL from location params.
+
+        Resolution order:
+        1. Direct URL (search_url)
+        2. Station DB lookup (exact match)
+        3. City DB lookup (exact match)
+        4. Prefecture + keyword (dynamic)
+        5. Keyword search on prefecture index page
+        """
+        if search_url:
+            return search_url
+
+        # Resolve prefecture slug
+        pref_slug = ""
+        if prefecture:
+            pref_slug = PREFECTURE_SLUGS.get(prefecture, "")
+            if not pref_slug:
+                full = _PREF_SHORT.get(
+                    prefecture.rstrip("都道府県"), "",
+                )
+                if full:
+                    pref_slug = PREFECTURE_SLUGS[full]
+
+        # Station lookup
+        if station_name and station_name in STATION_DB:
+            ps, sc = STATION_DB[station_name]
+            return (
+                f"https://suumo.jp/ms/chuko/{ps}/{sc}/"
+                f"?rn={quote(station_name)}"
+            )
+
+        # City lookup
+        if city_name and city_name in CITY_DB:
+            ps, sc = CITY_DB[city_name]
+            return f"https://suumo.jp/ms/chuko/{ps}/{sc}/"
+
+        # Dynamic: prefecture + keyword
+        keyword = station_name or city_name
+        if not keyword:
+            # Prefecture-level browse (all listings)
+            if pref_slug:
+                return (
+                    f"https://suumo.jp/ms/chuko/{pref_slug}/"
+                )
+            return None
+
+        # Use prefecture if known, else try hyogo → osaka → all
+        if pref_slug:
+            return (
+                f"https://suumo.jp/ms/chuko/{pref_slug}/"
+                f"?rn={quote(keyword)}"
+            )
+
+        # Default: search nationwide via keyword on kanto index
+        # (SUUMO redirects to relevant results)
+        return (
+            f"https://suumo.jp/ms/chuko/"
+            f"?rn={quote(keyword)}"
+        )
+
     async def _fetch_multi_station(
         self,
         stations: list[str],
         city_name: str = "",
+        prefecture: str = "",
         max_pages: int = 1,
         **filter_kwargs: Any,
     ) -> ConnectorResult:
@@ -222,6 +432,7 @@ class SuumoSearchConnector(BaseConnector):
             result = await self.fetch(
                 station_name=stn,
                 city_name=city_name,
+                prefecture=prefecture,
                 max_pages=max_pages,
                 stations=[],  # prevent recursion
                 **filter_kwargs,

@@ -164,6 +164,7 @@ export interface AreaSearchParams {
   station_name?: string;
   city_name?: string;
   search_url?: string;
+  prefecture?: string;
   max_pages?: number;
   price_min?: number | null;
   price_max?: number | null;

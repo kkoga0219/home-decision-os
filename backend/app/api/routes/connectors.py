@@ -79,7 +79,8 @@ class AreaSearchRequest(BaseModel):
     station_name: str = ""
     city_name: str = ""
     search_url: str = ""
-    max_pages: int = Field(default=2, ge=1, le=5)
+    prefecture: str = ""
+    max_pages: int = Field(default=3, ge=1, le=10)
     # Filters
     price_min: int | None = Field(default=None, description="最低価格(万円)")
     price_max: int | None = Field(default=None, description="最高価格(万円)")
@@ -115,6 +116,7 @@ async def area_search(body: AreaSearchRequest):
         station_name=body.station_name,
         city_name=body.city_name,
         search_url=body.search_url,
+        prefecture=body.prefecture,
         max_pages=body.max_pages,
         price_min=body.price_min,
         price_max=body.price_max,

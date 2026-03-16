@@ -3,9 +3,9 @@
 Chains multiple data sources to build the most complete picture:
 
 1. URL Preview → basic property info from listing page
-2. Area Stats  → local market data (built-in DB)
-3. SUUMO Market → real rental & condo market data (live fetch)
-4. MLIT API    → official transaction data (if key configured)
+2. MLIT API    → official transaction data → station-level area stats (if key configured)
+3. Area Stats  → local market data (MLIT real data or built-in DB fallback)
+4. SUUMO Market → real rental & condo market data (live fetch)
 5. Rent Estimator → monthly rent estimate using all available data
 6. Market Comparison → price vs area average
 
@@ -49,7 +49,7 @@ async def enrich_from_url(url: str) -> dict[str, Any]:
     else:
         result["errors"].extend(preview_result.errors)
 
-    # --- Step 2+3+4+5: Shared enrichment ---
+    # --- Steps 2-6: Shared enrichment ---
     await _enrich_with_market_data(result)
 
     return result
@@ -89,27 +89,37 @@ async def enrich_from_property_data(
 
 
 async def _enrich_with_market_data(result: dict[str, Any]) -> None:
-    """Shared enrichment: area stats → SUUMO market → MLIT → rent estimate → comparison."""
+    """Shared enrichment: MLIT → area stats → SUUMO → rent estimate → comparison."""
 
     station_name = result.get("hint_station_name", "")
     address_text = result.get("hint_address_text", "")
     price = result.get("hint_price_jpy")
 
-    # --- Step 2: Area Statistics (built-in DB) ---
-    area_connector = AreaStatsConnector()
+    # --- Step 2: MLIT API → station-level real area stats ---
+    mlit_area_data = None
+    if settings.mlit_api_key:
+        mlit_area_data = await _fetch_mlit_area_stats(
+            result, station_name, address_text
+        )
+
+    # --- Step 3: Area Statistics (MLIT real data or built-in fallback) ---
+    area_connector = AreaStatsConnector(mlit_override=mlit_area_data)
     area_result = await area_connector.fetch(
         station_name=station_name,
         address_text=address_text,
     )
 
     if area_result.success:
-        result["sources_used"].append(f"エリア統計({area_result.data.get('area_name', '')})")
+        source_label = area_result.data.get("data_quality", "エリア統計")
+        area_name = area_result.data.get("area_name", "")
+        result["sources_used"].append(f"エリア統計({area_name}) [{source_label}]")
         result["area_stats"] = area_result.data
 
-    # --- Step 3: SUUMO Real Market Data (live fetch) ---
+    # --- Step 4: SUUMO Real Market Data (live fetch) ---
     rental_market_data = None
     try:
         from app.connectors.suumo_market import SuumoMarketConnector
+
         market_connector = SuumoMarketConnector()
         market_result = await market_connector.fetch(
             station_name=station_name,
@@ -124,28 +134,12 @@ async def _enrich_with_market_data(result: dict[str, Any]) -> None:
             if condo_data and condo_data.get("avg_unit_price_sqm"):
                 if "area_stats" not in result:
                     result["area_stats"] = {}
-                # Override built-in stats with live data
-                result["area_stats"]["avg_unit_price_sqm_live"] = condo_data["avg_unit_price_sqm"]
+                result["area_stats"]["avg_unit_price_sqm_live"] = (
+                    condo_data["avg_unit_price_sqm"]
+                )
                 result["area_stats"]["live_data_source"] = "SUUMO相場ページ"
     except Exception as e:
         logger.warning("SUUMO market data error (non-fatal): %s", e)
-
-    # --- Step 4: MLIT API (if key is configured) ---
-    if settings.mlit_api_key:
-        try:
-            from app.connectors.mlit_transaction import MLITTransactionConnector
-            prefecture = ""
-            if area_result.success:
-                prefecture = area_result.data.get("prefecture", "")
-            pref_code = _prefecture_to_code(prefecture)
-            if pref_code:
-                mlit = MLITTransactionConnector(api_key=settings.mlit_api_key)
-                mlit_result = await mlit.fetch(prefecture_code=pref_code)
-                if mlit_result.success:
-                    result["sources_used"].append("国交省不動産取引API")
-                    result["mlit_data"] = mlit_result.data
-        except Exception as e:
-            logger.warning("MLIT API error (non-fatal): %s", e)
 
     # --- Step 5: Rent Estimation (using best available data) ---
     if price and price > 0:
@@ -191,19 +185,119 @@ async def _enrich_with_market_data(result: dict[str, Any]) -> None:
                 ),
             }
 
+        # If MLIT data had quarterly trends, include them in the comparison
+        if mlit_area_data and mlit_area_data.get("quarterly_prices"):
+            result["market_comparison"]["price_trend"] = (
+                mlit_area_data.get("price_trend", "")
+            )
+            result["market_comparison"]["price_trend_pct"] = (
+                mlit_area_data.get("price_trend_pct", 0)
+            )
+            result["market_comparison"]["quarterly_prices"] = (
+                mlit_area_data["quarterly_prices"]
+            )
 
-# -------------------------------------------------------------------
-# Helpers
-# -------------------------------------------------------------------
 
-_PREF_CODES = {
-    "北海道": "01", "東京都": "13", "神奈川県": "14",
-    "大阪府": "27", "兵庫県": "28", "京都府": "26",
-    "愛知県": "23", "福岡県": "40", "埼玉県": "11",
-    "千葉県": "12", "奈良県": "29",
-}
+async def _fetch_mlit_area_stats(
+    result: dict[str, Any],
+    station_name: str,
+    address_text: str,
+) -> dict[str, Any] | None:
+    """Fetch real area stats from MLIT API.
+
+    Determines prefecture/city from address or station name,
+    then fetches condo transaction data and computes station-level stats.
+    """
+    try:
+        from app.connectors.mlit_transaction import (
+            MLITTransactionConnector,
+            city_name_to_code,
+            prefecture_name_to_code,
+            station_stats_to_area_data,
+        )
+
+        # Determine prefecture and city from available data
+        pref_code, city_code = _resolve_location_codes(
+            station_name, address_text
+        )
+        if not pref_code:
+            logger.info("MLIT: Could not determine prefecture code")
+            return None
+
+        mlit = MLITTransactionConnector(api_key=settings.mlit_api_key)
+        stats = await mlit.fetch_station_stats(
+            prefecture_code=pref_code,
+            city_code=city_code,
+            station_name=station_name,
+            from_period="20221",  # 3 years for trend analysis
+            to_period="20254",
+        )
+
+        if stats is None:
+            logger.info("MLIT: No condo transactions found")
+            return None
+
+        result["sources_used"].append(
+            f"国交省不動産取引API ({stats.transaction_count}件)"
+        )
+        result["mlit_data"] = {
+            "transaction_count": stats.transaction_count,
+            "avg_unit_price_sqm": stats.avg_unit_price_sqm,
+            "median_unit_price_sqm": stats.median_unit_price_sqm,
+            "price_trend": stats.price_trend,
+            "price_trend_pct": stats.price_trend_pct,
+            "quarterly_prices": stats.quarterly_prices,
+        }
+
+        return station_stats_to_area_data(stats)
+
+    except Exception as e:
+        logger.warning("MLIT area stats error (non-fatal): %s", e)
+        return None
 
 
-def _prefecture_to_code(prefecture: str) -> str:
-    """Convert prefecture name to 2-digit code."""
-    return _PREF_CODES.get(prefecture, "")
+def _resolve_location_codes(
+    station_name: str, address_text: str,
+) -> tuple[str, str]:
+    """Resolve prefecture code and city code from station/address.
+
+    Returns (prefecture_code, city_code) tuple.
+    """
+    import re
+
+    from app.connectors.mlit_transaction import (
+        city_name_to_code,
+        prefecture_name_to_code,
+    )
+
+    pref_code = ""
+    city_code = ""
+
+    # Try extracting from address text
+    if address_text:
+        # Prefecture
+        m = re.search(
+            r"(東京都|北海道|(?:大阪|京都)府|.{2,3}県)", address_text
+        )
+        if m:
+            pref_code = prefecture_name_to_code(m.group(1))
+
+        # City
+        m2 = re.search(r"(.{2,4}[市区町村])", address_text)
+        if m2:
+            city_code = city_name_to_code(m2.group(1))
+
+    # Default to 兵庫県尼崎市 for known Kansai stations
+    if not pref_code:
+        kansai_stations = {
+            "塚口", "武庫之荘", "立花", "尼崎", "園田",
+            "伊丹", "西宮", "芦屋", "甲子園", "鳴尾",
+        }
+        if station_name in kansai_stations or any(
+            s in station_name for s in kansai_stations
+        ):
+            pref_code = "28"  # 兵庫県
+            if not city_code:
+                city_code = "28202"  # 尼崎市 (default for Tsukaguchi area)
+
+    return pref_code, city_code

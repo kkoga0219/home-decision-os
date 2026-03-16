@@ -22,6 +22,7 @@ services:
     environment:
       HDOS_DATABASE_URL: postgresql://hdos:hdos@db:5432/hdos
       HDOS_DEBUG: "false"
+      HDOS_MLIT_API_KEY: ${HDOS_MLIT_API_KEY:-}
       PYTHONPATH: /app
     depends_on:
       db:

@@ -1,28 +1,29 @@
-"""Built-in area statistics database.
+"""Built-in area statistics database with MLIT real data override.
 
-Provides baseline market data for major Kansai / Tokyo metro areas
-without requiring an external API key.
+Provides baseline market data for major Kansai / Tokyo metro areas.
+When MLIT API key is configured, real transaction data takes precedence
+over the hardcoded fallback values.
 
-Data is sourced from publicly available aggregate statistics:
-- 不動産経済研究所 (Real Estate Economic Institute) summaries
-- 国交省 不動産情報ライブラリ public summaries
-- 令和5年地価公示 (2023 Official Land Price)
-
-This is a FALLBACK when MLIT API key is not configured.
-When the API key is available, real transaction data takes precedence.
+Data sources:
+- Primary: MLIT 不動産取引価格API (real transaction data)
+- Fallback: 不動産経済研究所 / 国交省公示地価 (hardcoded estimates)
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 from app.connectors.base import BaseConnector, ConnectorResult
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class AreaData:
     """Market statistics for an area."""
+
     area_name: str
     prefecture: str
     avg_unit_price_sqm: int       # 平均㎡単価 (中古マンション)
@@ -37,7 +38,7 @@ class AreaData:
 
 
 # -------------------------------------------------------------------
-# Built-in area database (key = city/station name)
+# Built-in area database (key = city/station name) - FALLBACK DATA
 # -------------------------------------------------------------------
 
 AREA_DB: dict[str, AreaData] = {
@@ -52,7 +53,7 @@ AREA_DB: dict[str, AreaData] = {
         transaction_count_annual=1200,
         price_trend="上昇",
         population_trend="横ばい",
-        source="不動産経済研究所/国交省公示地価(2023-2024概算)",
+        source="不動産経済研究所/国交省公示地価(2023-2024概算) ※フォールバック",
         note="大阪へのアクセス良好。JR/阪急沿線で人気上昇中",
     ),
     "塚口": AreaData(
@@ -65,7 +66,7 @@ AREA_DB: dict[str, AreaData] = {
         transaction_count_annual=250,
         price_trend="上昇",
         population_trend="増加",
-        source="MLIT取引価格集計(2023-2024概算)/SUUMO相場データ",
+        source="MLIT取引価格集計(概算) ※フォールバック",
         note="再開発で注目エリア。阪急塚口駅周辺は特に人気",
     ),
     "武庫之荘": AreaData(
@@ -78,7 +79,7 @@ AREA_DB: dict[str, AreaData] = {
         transaction_count_annual=180,
         price_trend="上昇",
         population_trend="横ばい",
-        source="MLIT取引価格集計(2023-2024概算)",
+        source="MLIT取引価格集計(概算) ※フォールバック",
     ),
     "立花": AreaData(
         area_name="立花",
@@ -90,7 +91,7 @@ AREA_DB: dict[str, AreaData] = {
         transaction_count_annual=150,
         price_trend="横ばい",
         population_trend="横ばい",
-        source="MLIT取引価格集計(2023-2024概算)",
+        source="MLIT取引価格集計(概算) ※フォールバック",
     ),
     # --- 大阪市 ---
     "大阪市": AreaData(
@@ -103,7 +104,7 @@ AREA_DB: dict[str, AreaData] = {
         transaction_count_annual=8000,
         price_trend="上昇",
         population_trend="横ばい",
-        source="不動産経済研究所(2024概算)",
+        source="不動産経済研究所(2024概算) ※フォールバック",
     ),
     "梅田": AreaData(
         area_name="梅田・北区",
@@ -115,7 +116,7 @@ AREA_DB: dict[str, AreaData] = {
         transaction_count_annual=600,
         price_trend="上昇",
         population_trend="増加",
-        source="不動産経済研究所(2024概算)",
+        source="不動産経済研究所(2024概算) ※フォールバック",
     ),
     # --- 神戸市 ---
     "神戸市": AreaData(
@@ -128,7 +129,7 @@ AREA_DB: dict[str, AreaData] = {
         transaction_count_annual=3000,
         price_trend="横ばい",
         population_trend="減少",
-        source="不動産経済研究所(2024概算)",
+        source="不動産経済研究所(2024概算) ※フォールバック",
     ),
     "三宮": AreaData(
         area_name="三宮・中央区",
@@ -140,7 +141,7 @@ AREA_DB: dict[str, AreaData] = {
         transaction_count_annual=400,
         price_trend="上昇",
         population_trend="横ばい",
-        source="不動産経済研究所(2024概算)",
+        source="不動産経済研究所(2024概算) ※フォールバック",
     ),
     # --- 西宮市 ---
     "西宮市": AreaData(
@@ -153,7 +154,7 @@ AREA_DB: dict[str, AreaData] = {
         transaction_count_annual=800,
         price_trend="上昇",
         population_trend="増加",
-        source="不動産経済研究所(2024概算)",
+        source="不動産経済研究所(2024概算) ※フォールバック",
     ),
     # --- 東京 (reference) ---
     "東京23区": AreaData(
@@ -166,13 +167,46 @@ AREA_DB: dict[str, AreaData] = {
         transaction_count_annual=25000,
         price_trend="上昇",
         population_trend="増加",
-        source="不動産経済研究所(2024概算)",
+        source="不動産経済研究所(2024概算) ※フォールバック",
     ),
+}
+
+# Default prefecture-level gross yields for rent estimation
+# Used when MLIT data doesn't include yield info (MLIT has no rent data)
+_DEFAULT_YIELDS: dict[str, float] = {
+    "兵庫県": 0.055,
+    "大阪府": 0.050,
+    "東京都": 0.042,
+    "神奈川県": 0.048,
+    "京都府": 0.050,
+    "愛知県": 0.052,
+    "福岡県": 0.053,
+}
+
+# Default prefecture-level rent ㎡ unit prices
+_DEFAULT_RENT_SQM: dict[str, int] = {
+    "兵庫県": 1_550,
+    "大阪府": 1_900,
+    "東京都": 3_500,
+    "神奈川県": 2_200,
+    "京都府": 1_800,
 }
 
 
 class AreaStatsConnector(BaseConnector):
-    """Look up built-in area statistics."""
+    """Look up area statistics, with optional MLIT real data override."""
+
+    def __init__(self, mlit_override: dict[str, Any] | None = None):
+        """Initialize with optional MLIT real data.
+
+        Parameters
+        ----------
+        mlit_override : dict | None
+            Real data from MLITTransactionConnector.fetch_station_stats()
+            converted via station_stats_to_area_data().
+            When provided, this takes precedence over hardcoded AREA_DB.
+        """
+        self._mlit_data = mlit_override
 
     @property
     def name(self) -> str:
@@ -187,8 +221,52 @@ class AreaStatsConnector(BaseConnector):
     ) -> ConnectorResult:
         """Find the best matching area data.
 
-        Searches by station name first, then city name, then address substring.
+        If MLIT real data was provided at init, use that first.
+        Otherwise fall back to hardcoded AREA_DB.
         """
+        # --- Priority 1: MLIT real data (if provided) ---
+        if self._mlit_data:
+            merged = self._merge_with_defaults(self._mlit_data)
+            return ConnectorResult(
+                success=True,
+                source=self.name,
+                data=merged,
+            )
+
+        # --- Priority 2: Hardcoded fallback ---
+        return self._lookup_fallback(station_name, city_name, address_text)
+
+    def _merge_with_defaults(self, mlit_data: dict[str, Any]) -> dict[str, Any]:
+        """Merge MLIT data with default values for fields MLIT doesn't provide.
+
+        MLIT has no rent data, so we fill in rent/yield from defaults.
+        """
+        prefecture = mlit_data.get("prefecture", "")
+        result = dict(mlit_data)
+
+        # Fill rent ㎡ unit price from defaults if MLIT doesn't have it
+        if not result.get("avg_rent_per_sqm"):
+            result["avg_rent_per_sqm"] = _DEFAULT_RENT_SQM.get(prefecture, 1_500)
+            result["rent_source"] = "推定値（MLITに賃料データなし）"
+
+        # Fill gross yield from defaults
+        if not result.get("avg_gross_yield"):
+            result["avg_gross_yield"] = _DEFAULT_YIELDS.get(prefecture, 0.055)
+            result["yield_source"] = "推定値（MLITに賃料データなし）"
+
+        # Population trend is not in MLIT data
+        if "population_trend" not in result:
+            result["population_trend"] = "不明"
+
+        return result
+
+    def _lookup_fallback(
+        self,
+        station_name: str,
+        city_name: str,
+        address_text: str,
+    ) -> ConnectorResult:
+        """Look up from hardcoded AREA_DB."""
         # Try exact station match
         if station_name and station_name in AREA_DB:
             return self._ok(AREA_DB[station_name])
@@ -209,6 +287,7 @@ class AreaStatsConnector(BaseConnector):
         # Try extracting city from address
         if address_text:
             import re
+
             m = re.search(r"(.{2,4}[市区町村])", address_text)
             if m:
                 city = m.group(1)
@@ -218,7 +297,10 @@ class AreaStatsConnector(BaseConnector):
         return ConnectorResult(
             success=False,
             source=self.name,
-            errors=[f"エリアデータが見つかりません: station={station_name}, city={city_name}"],
+            errors=[
+                f"エリアデータが見つかりません: "
+                f"station={station_name}, city={city_name}"
+            ],
             data={"available_areas": list(AREA_DB.keys())},
         )
 
@@ -238,5 +320,6 @@ class AreaStatsConnector(BaseConnector):
                 "population_trend": area.population_trend,
                 "source": area.source,
                 "note": area.note,
+                "data_quality": "フォールバック（概算値）",
             },
         )

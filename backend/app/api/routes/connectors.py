@@ -14,7 +14,12 @@ from pydantic import BaseModel, Field
 from app.config import settings
 from app.connectors.area_stats import AreaStatsConnector
 from app.connectors.enrichment import enrich_from_property_data, enrich_from_url
-from app.connectors.mlit_transaction import MLITTransactionConnector
+from app.connectors.mlit_transaction import (
+    MLITTransactionConnector,
+    city_name_to_code,
+    prefecture_name_to_code,
+    station_stats_to_area_data,
+)
 from app.connectors.rent_estimator import RentEstimatorConnector
 from app.connectors.suumo_market import SuumoMarketConnector
 from app.connectors.suumo_search import SuumoSearchConnector
@@ -213,14 +218,106 @@ class AreaStatsRequest(BaseModel):
 
 @router.post("/area-stats")
 async def area_stats(body: AreaStatsRequest):
-    """Look up built-in area market statistics."""
-    connector = AreaStatsConnector()
+    """Look up area market statistics.
+
+    If MLIT API key is configured, returns real transaction data.
+    Otherwise falls back to built-in estimates.
+    """
+    # Try MLIT real data first
+    mlit_data = None
+    if settings.mlit_api_key and (body.station_name or body.address_text):
+        try:
+            import re
+
+            pref_code = ""
+            city_code = ""
+            if body.address_text:
+                m = re.search(
+                    r"(東京都|北海道|(?:大阪|京都)府|.{2,3}県)",
+                    body.address_text,
+                )
+                if m:
+                    pref_code = prefecture_name_to_code(m.group(1))
+                m2 = re.search(r"(.{2,4}[市区町村])", body.address_text)
+                if m2:
+                    city_code = city_name_to_code(m2.group(1))
+            if body.city_name:
+                city_code = city_name_to_code(body.city_name)
+            if not pref_code:
+                pref_code = "28"  # Default: 兵庫県
+
+            mlit = MLITTransactionConnector(api_key=settings.mlit_api_key)
+            stats = await mlit.fetch_station_stats(
+                prefecture_code=pref_code,
+                city_code=city_code,
+                station_name=body.station_name,
+            )
+            if stats:
+                mlit_data = station_stats_to_area_data(stats)
+        except Exception:
+            pass
+
+    connector = AreaStatsConnector(mlit_override=mlit_data)
     result = await connector.fetch(
         station_name=body.station_name,
         city_name=body.city_name,
         address_text=body.address_text,
     )
     return {"success": result.success, "data": result.data, "errors": result.errors}
+
+
+# --- MLIT Station Stats (detailed) ---
+
+class MLITStationStatsRequest(BaseModel):
+    station_name: str = ""
+    city_name: str = ""
+    prefecture_code: str = ""
+    from_period: str = "20221"
+    to_period: str = "20254"
+
+
+@router.post("/mlit-station-stats")
+async def mlit_station_stats(body: MLITStationStatsRequest):
+    """Fetch detailed station-level area statistics from MLIT API.
+
+    Returns real transaction data aggregated by station, including
+    quarterly price trends.
+    """
+    api_key = settings.mlit_api_key
+    if not api_key:
+        raise HTTPException(
+            503,
+            "MLIT API key not configured. Set HDOS_MLIT_API_KEY.",
+        )
+
+    pref_code = body.prefecture_code
+    city_code = ""
+    if body.city_name:
+        city_code = city_name_to_code(body.city_name)
+    if not pref_code:
+        pref_code = "28"  # Default: 兵庫県
+
+    mlit = MLITTransactionConnector(api_key=api_key)
+    stats = await mlit.fetch_station_stats(
+        prefecture_code=pref_code,
+        city_code=city_code,
+        station_name=body.station_name,
+        from_period=body.from_period,
+        to_period=body.to_period,
+    )
+
+    if stats is None:
+        return {
+            "success": False,
+            "data": None,
+            "errors": ["取引データが見つかりませんでした"],
+        }
+
+    return {
+        "success": True,
+        "data": station_stats_to_area_data(stats),
+        "errors": [],
+    }
 
 
 # --- Market Data (MLIT) ---

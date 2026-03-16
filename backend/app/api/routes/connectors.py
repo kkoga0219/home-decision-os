@@ -223,12 +223,47 @@ async def area_search(body: AreaSearchRequest):
         current_year=datetime.date.today().year,
     )
 
-    # --- 4. Enrich each listing with rent estimate + market comparison ---
+    # --- 4. ML Valuation (MLIT-based, if API key available) ---
+    ml_valuation_data = None
+    hedonic_model = None
+    ml_dataset = None
+    ml_cap_rates = None
+    try:
+        if settings.mlit_api_key:
+            from app.ml.valuation_engine import run_valuation
+            from app.ml.data_pipeline import fetch_ml_dataset
+            from app.ml.hedonic_model import train_hedonic_model
+            from app.ml.rent_model import calibrate_cap_rates
+            from app.connectors.mlit_transaction import (
+                prefecture_name_to_code as _pnc,
+                city_name_to_code as _cnc,
+            )
+            pref_code = _pnc(body.prefecture) or "28"
+            city_code = _cnc(body.city_name) if body.city_name else ""
+            ml_dataset = await fetch_ml_dataset(
+                settings.mlit_api_key, pref_code, city_code,
+                station_name=body.station_name,
+            )
+            if ml_dataset and ml_dataset.n_samples >= 15:
+                hedonic_model = train_hedonic_model(ml_dataset)
+                pref_yield = {
+                    "兵庫県": 0.055, "大阪府": 0.050,
+                    "東京都": 0.042, "京都府": 0.050,
+                }.get(body.prefecture, 0.055)
+                ml_cap_rates = calibrate_cap_rates(
+                    ml_dataset,
+                    rental_market_data=rental_market_data,
+                    prefecture_base_yield=pref_yield,
+                )
+    except Exception as exc:
+        all_errors.append(f"ML valuation init: {exc!s}")
+
+    # --- 5. Enrich each listing ---
     enriched_listings: list[dict] = []
     rent_connector = RentEstimatorConnector()
 
     area_ok = area_result and not isinstance(area_result, Exception)
-    prefecture = (
+    pref_str = (
         area_result.data.get("prefecture", "")
         if area_ok and area_result.success else ""
     )
@@ -244,31 +279,95 @@ async def area_search(body: AreaSearchRequest):
     for listing in listings:
         price = listing.get("price_jpy")
         if price and price > 0:
-            try:
-                rent_result = await rent_connector.fetch(
-                    price_jpy=price,
-                    floor_area_sqm=listing.get("floor_area_sqm"),
-                    built_year=listing.get("built_year"),
-                    walking_minutes=listing.get("walking_minutes"),
-                    prefecture=prefecture,
-                    area_avg_unit_price=area_avg_unit,
-                    layout=listing.get("layout", ""),
-                    rental_market_data=rental_market_data,
-                )
-                if rent_result.success:
-                    listing["estimated_rent"] = (
-                        rent_result.data["estimated_rent"]
+            # --- ML rent estimate (if available) ---
+            used_ml_rent = False
+            if ml_cap_rates:
+                try:
+                    from app.ml.rent_model import estimate_rent_ml
+                    built_yr = listing.get("built_year")
+                    age = (
+                        datetime.date.today().year - built_yr
+                        if built_yr else 15
                     )
-                    listing["gross_yield"] = (
-                        rent_result.data["gross_yield"]
+                    ml_rent = estimate_rent_ml(
+                        ml_cap_rates,
+                        price_jpy=price,
+                        floor_area=listing.get("floor_area_sqm", 65),
+                        age_years=float(age),
+                        walking_minutes=float(
+                            listing.get("walking_minutes", 10),
+                        ),
+                        layout=listing.get("layout", ""),
+                        station_name=listing.get(
+                            "station_name", "",
+                        ),
                     )
-                    listing["rent_confidence"] = (
-                        rent_result.data.get("confidence", "low")
-                    )
-            except Exception:
-                pass
+                    listing["estimated_rent"] = ml_rent.estimated_rent
+                    listing["gross_yield"] = ml_rent.gross_yield
+                    listing["rent_confidence"] = ml_rent.confidence
+                    listing["rent_method"] = ml_rent.method
+                    used_ml_rent = True
+                except Exception:
+                    pass
 
-            if avg_70 > 0:
+            # Fallback: original rent estimator
+            if not used_ml_rent:
+                try:
+                    rent_result = await rent_connector.fetch(
+                        price_jpy=price,
+                        floor_area_sqm=listing.get("floor_area_sqm"),
+                        built_year=listing.get("built_year"),
+                        walking_minutes=listing.get("walking_minutes"),
+                        prefecture=pref_str,
+                        area_avg_unit_price=area_avg_unit,
+                        layout=listing.get("layout", ""),
+                        rental_market_data=rental_market_data,
+                    )
+                    if rent_result.success:
+                        listing["estimated_rent"] = (
+                            rent_result.data["estimated_rent"]
+                        )
+                        listing["gross_yield"] = (
+                            rent_result.data["gross_yield"]
+                        )
+                        listing["rent_confidence"] = (
+                            rent_result.data.get("confidence", "low")
+                        )
+                except Exception:
+                    pass
+
+            # --- ML hedonic price assessment (if available) ---
+            if hedonic_model:
+                try:
+                    built_yr = listing.get("built_year")
+                    age = (
+                        datetime.date.today().year - built_yr
+                        if built_yr else 15
+                    )
+                    pred = hedonic_model.predict(
+                        floor_area=listing.get("floor_area_sqm", 65),
+                        age_years=float(age),
+                        walking_minutes=float(
+                            listing.get("walking_minutes", 10),
+                        ),
+                        layout=listing.get("layout", ""),
+                        station_name=listing.get(
+                            "station_name", "",
+                        ),
+                        listing_price=price,
+                    )
+                    listing["ml_fair_price"] = (
+                        pred.predicted_total_price
+                    )
+                    listing["ml_deviation_pct"] = pred.deviation_pct
+                    listing["ml_assessment"] = pred.assessment
+                    listing["vs_market_pct"] = pred.deviation_pct
+                    listing["vs_market"] = pred.assessment
+                except Exception:
+                    pass
+
+            # Fallback: simple area average comparison
+            if "vs_market_pct" not in listing and avg_70 > 0:
                 area_sqm = listing.get("floor_area_sqm", 70)
                 normalized = (
                     price * 70 / area_sqm if area_sqm else price
@@ -304,6 +403,22 @@ async def area_search(body: AreaSearchRequest):
             if area_ok and area_result.success else None
         ),
         "suumo_market": suumo_market_data,
+        "ml_model_info": {
+            "hedonic_available": hedonic_model is not None,
+            "hedonic_r2": (
+                hedonic_model.r2_score if hedonic_model else None
+            ),
+            "hedonic_mape": (
+                hedonic_model.mape if hedonic_model else None
+            ),
+            "dataset_size": (
+                ml_dataset.n_samples if ml_dataset else 0
+            ),
+            "rent_calibration": (
+                ml_cap_rates.calibration_quality
+                if ml_cap_rates else None
+            ),
+        },
         "errors": all_errors,
     }
 
@@ -591,3 +706,44 @@ async def rent_estimate(body: RentEstimateRequest):
         method=result.data["method"],
         confidence=result.data.get("confidence", "low"),
     )
+
+
+# ===================================================================
+# ML Valuation Engine (MLIT-based)
+# ===================================================================
+
+class ValuationRequest(BaseModel):
+    price_jpy: int = Field(..., gt=0, description="物件価格 (円)")
+    floor_area_sqm: float = Field(default=65.0, description="面積 (㎡)")
+    age_years: float = Field(default=15.0, description="築年数")
+    walking_minutes: float = Field(default=10.0, description="駅徒歩")
+    layout: str = Field(default="", description="間取り (3LDK等)")
+    station_name: str = Field(default="", description="最寄駅")
+    city_name: str = Field(default="", description="市区町村")
+    prefecture: str = Field(default="兵庫県", description="都道府県")
+
+
+@router.post("/valuation")
+async def ml_valuation(body: ValuationRequest):
+    """ML-based property valuation using MLIT transaction data.
+
+    Returns comprehensive analysis:
+    - Hedonic fair price prediction
+    - Comparable transaction analysis
+    - Price trend forecast
+    - ML-calibrated rent estimate
+    - Data-driven exit score
+    """
+    from app.ml.valuation_engine import run_valuation
+
+    report = await run_valuation(
+        price_jpy=body.price_jpy,
+        floor_area=body.floor_area_sqm,
+        age_years=body.age_years,
+        walking_minutes=body.walking_minutes,
+        layout=body.layout,
+        station_name=body.station_name,
+        city_name=body.city_name,
+        prefecture=body.prefecture,
+    )
+    return report.to_dict()

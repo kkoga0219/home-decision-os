@@ -3,10 +3,14 @@
 import { useState } from "react";
 import Link from "next/link";
 import { searchArea, createProperty } from "@/lib/api";
-import type { AreaSearchResult, AreaSearchListing } from "@/lib/api";
+import type { AreaSearchResult, AreaSearchListing, AreaSearchParams } from "@/lib/api";
 import type { AreaStats } from "@/lib/types";
 import { yen, yenCompact, pct } from "@/lib/format";
 import { useRouter } from "next/navigation";
+
+/* ------------------------------------------------------------------ */
+/* Constants                                                           */
+/* ------------------------------------------------------------------ */
 
 const PRESET_AREAS = [
   { label: "塚口", station: "塚口" },
@@ -17,6 +21,119 @@ const PRESET_AREAS = [
   { label: "西宮市全域", city: "西宮市" },
 ];
 
+const ALL_STATIONS = [
+  "塚口", "武庫之荘", "立花", "尼崎", "園田",
+  "西宮北口", "夙川", "甲子園", "芦屋", "伊丹",
+  "三宮", "六甲道", "住吉",
+];
+
+const LAYOUT_OPTIONS = [
+  "1K", "1DK", "1LDK", "2K", "2DK", "2LDK",
+  "3K", "3DK", "3LDK", "4LDK",
+];
+
+const PRICE_MIN_OPTIONS = [
+  { label: "下限なし", value: "" },
+  { label: "300万円", value: "300" },
+  { label: "500万円", value: "500" },
+  { label: "800万円", value: "800" },
+  { label: "1,000万円", value: "1000" },
+  { label: "1,500万円", value: "1500" },
+  { label: "2,000万円", value: "2000" },
+  { label: "2,500万円", value: "2500" },
+  { label: "3,000万円", value: "3000" },
+];
+
+const PRICE_MAX_OPTIONS = [
+  { label: "上限なし", value: "" },
+  { label: "500万円", value: "500" },
+  { label: "800万円", value: "800" },
+  { label: "1,000万円", value: "1000" },
+  { label: "1,500万円", value: "1500" },
+  { label: "2,000万円", value: "2000" },
+  { label: "2,500万円", value: "2500" },
+  { label: "3,000万円", value: "3000" },
+  { label: "4,000万円", value: "4000" },
+  { label: "5,000万円", value: "5000" },
+];
+
+const AREA_MIN_OPTIONS = [
+  { label: "下限なし", value: "" },
+  { label: "20㎡", value: "20" },
+  { label: "30㎡", value: "30" },
+  { label: "40㎡", value: "40" },
+  { label: "50㎡", value: "50" },
+  { label: "60㎡", value: "60" },
+  { label: "70㎡", value: "70" },
+  { label: "80㎡", value: "80" },
+];
+
+const AREA_MAX_OPTIONS = [
+  { label: "上限なし", value: "" },
+  { label: "30㎡", value: "30" },
+  { label: "40㎡", value: "40" },
+  { label: "50㎡", value: "50" },
+  { label: "60㎡", value: "60" },
+  { label: "70㎡", value: "70" },
+  { label: "80㎡", value: "80" },
+  { label: "100㎡", value: "100" },
+];
+
+const WALK_OPTIONS = [
+  { label: "指定なし", value: "" },
+  { label: "1分以内", value: "1" },
+  { label: "3分以内", value: "3" },
+  { label: "5分以内", value: "5" },
+  { label: "7分以内", value: "7" },
+  { label: "10分以内", value: "10" },
+  { label: "15分以内", value: "15" },
+  { label: "20分以内", value: "20" },
+];
+
+const AGE_OPTIONS = [
+  { label: "指定なし", value: "" },
+  { label: "新築", value: "1" },
+  { label: "3年以内", value: "3" },
+  { label: "5年以内", value: "5" },
+  { label: "10年以内", value: "10" },
+  { label: "15年以内", value: "15" },
+  { label: "20年以内", value: "20" },
+  { label: "25年以内", value: "25" },
+  { label: "30年以内", value: "30" },
+];
+
+
+/* ------------------------------------------------------------------ */
+/* Filter state type                                                   */
+/* ------------------------------------------------------------------ */
+
+interface Filters {
+  priceMin: string;
+  priceMax: string;
+  areaMin: string;
+  areaMax: string;
+  layouts: string[];
+  walkMax: string;
+  ageMax: string;
+  stations: string[];
+}
+
+const INITIAL_FILTERS: Filters = {
+  priceMin: "",
+  priceMax: "",
+  areaMin: "",
+  areaMax: "",
+  layouts: [],
+  walkMax: "",
+  ageMax: "",
+  stations: [],
+};
+
+
+/* ------------------------------------------------------------------ */
+/* Page component                                                      */
+/* ------------------------------------------------------------------ */
+
 export default function AreaSearchPage() {
   const router = useRouter();
   const [station, setStation] = useState("");
@@ -26,20 +143,76 @@ export default function AreaSearchPage() {
   const [error, setError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<string>("price");
   const [registeringUrl, setRegisteringUrl] = useState<string | null>(null);
+  const [showFilters, setShowFilters] = useState(false);
+  const [filters, setFilters] = useState<Filters>(INITIAL_FILTERS);
+
+  function updateFilter<K extends keyof Filters>(key: K, val: Filters[K]) {
+    setFilters((prev) => ({ ...prev, [key]: val }));
+  }
+
+  function toggleLayout(layout: string) {
+    setFilters((prev) => ({
+      ...prev,
+      layouts: prev.layouts.includes(layout)
+        ? prev.layouts.filter((l) => l !== layout)
+        : [...prev.layouts, layout],
+    }));
+  }
+
+  function toggleStation(stn: string) {
+    setFilters((prev) => ({
+      ...prev,
+      stations: prev.stations.includes(stn)
+        ? prev.stations.filter((s) => s !== stn)
+        : [...prev.stations, stn],
+    }));
+  }
+
+  function resetFilters() {
+    setFilters(INITIAL_FILTERS);
+  }
+
+  function hasActiveFilters() {
+    return (
+      filters.priceMin !== "" ||
+      filters.priceMax !== "" ||
+      filters.areaMin !== "" ||
+      filters.areaMax !== "" ||
+      filters.layouts.length > 0 ||
+      filters.walkMax !== "" ||
+      filters.ageMax !== "" ||
+      filters.stations.length > 0
+    );
+  }
 
   async function handleSearch(stationOverride?: string, cityOverride?: string) {
     const s = stationOverride ?? station;
     const c = cityOverride ?? city;
-    if (!s && !c) return;
+    // Allow search if we have station/city OR multi-station filter
+    if (!s && !c && filters.stations.length === 0) return;
+
     setLoading(true);
     setError(null);
     setResult(null);
+
     try {
-      const res = await searchArea({
-        station_name: s,
+      const params: AreaSearchParams = {
+        station_name: filters.stations.length > 0 ? "" : s,
         city_name: c,
-        max_pages: 2,
-      });
+        max_pages: 3,
+      };
+
+      // Apply filters
+      if (filters.priceMin) params.price_min = parseInt(filters.priceMin);
+      if (filters.priceMax) params.price_max = parseInt(filters.priceMax);
+      if (filters.areaMin) params.area_min = parseFloat(filters.areaMin);
+      if (filters.areaMax) params.area_max = parseFloat(filters.areaMax);
+      if (filters.layouts.length > 0) params.layouts = filters.layouts;
+      if (filters.walkMax) params.walking_max = parseInt(filters.walkMax);
+      if (filters.ageMax) params.age_max = parseInt(filters.ageMax);
+      if (filters.stations.length > 0) params.stations = filters.stations;
+
+      const res = await searchArea(params);
       setResult(res);
       if (!res.success) {
         setError("検索結果の取得に失敗しました。");
@@ -95,7 +268,7 @@ export default function AreaSearchPage() {
       <h1 className="text-2xl font-bold mb-6">エリア物件検索</h1>
 
       {/* Search bar */}
-      <div className="bg-white rounded-lg shadow-sm p-5 mb-6">
+      <div className="bg-white rounded-lg shadow-sm p-5 mb-4">
         <div className="flex gap-3 mb-4">
           <div className="flex-1">
             <label className="block text-sm font-medium text-gray-600 mb-1">駅名</label>
@@ -105,6 +278,7 @@ export default function AreaSearchPage() {
               onChange={(e) => setStation(e.target.value)}
               placeholder="例: 塚口"
               onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+              disabled={filters.stations.length > 0}
             />
           </div>
           <div className="flex-1">
@@ -120,7 +294,7 @@ export default function AreaSearchPage() {
           <div className="flex items-end">
             <button
               onClick={() => handleSearch()}
-              disabled={loading || (!station && !city)}
+              disabled={loading || (!station && !city && filters.stations.length === 0)}
               className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-medium transition-colors"
             >
               {loading ? "検索中..." : "検索"}
@@ -129,8 +303,8 @@ export default function AreaSearchPage() {
         </div>
 
         {/* Preset area buttons */}
-        <div className="flex flex-wrap gap-2">
-          <span className="text-xs text-gray-400 self-center mr-1">よく使うエリア:</span>
+        <div className="flex flex-wrap gap-2 items-center">
+          <span className="text-xs text-gray-400 mr-1">よく使うエリア:</span>
           {PRESET_AREAS.map((p) => (
             <button
               key={p.label}
@@ -141,8 +315,183 @@ export default function AreaSearchPage() {
               {p.label}
             </button>
           ))}
+          <div className="ml-auto">
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                showFilters || hasActiveFilters()
+                  ? "bg-blue-100 text-blue-700"
+                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+              }`}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+              </svg>
+              絞り込み
+              {hasActiveFilters() && (
+                <span className="bg-blue-600 text-white rounded-full w-4 h-4 text-[10px] flex items-center justify-center">
+                  {[filters.priceMin, filters.priceMax, filters.areaMin, filters.areaMax, filters.walkMax, filters.ageMax].filter(Boolean).length + (filters.layouts.length > 0 ? 1 : 0) + (filters.stations.length > 0 ? 1 : 0)}
+                </span>
+              )}
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* Filters panel */}
+      {showFilters && (
+        <div className="bg-white rounded-lg shadow-sm p-5 mb-4 border border-blue-100">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-bold text-gray-700">検索条件</h3>
+            {hasActiveFilters() && (
+              <button onClick={resetFilters} className="text-xs text-red-500 hover:text-red-700">
+                条件をリセット
+              </button>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Price range */}
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1.5">価格帯</label>
+              <div className="flex items-center gap-2">
+                <select
+                  className="flex-1 border border-gray-300 rounded px-2 py-1.5 text-sm"
+                  value={filters.priceMin}
+                  onChange={(e) => updateFilter("priceMin", e.target.value)}
+                >
+                  {PRICE_MIN_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+                <span className="text-gray-400 text-xs">〜</span>
+                <select
+                  className="flex-1 border border-gray-300 rounded px-2 py-1.5 text-sm"
+                  value={filters.priceMax}
+                  onChange={(e) => updateFilter("priceMax", e.target.value)}
+                >
+                  {PRICE_MAX_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Area range */}
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1.5">専有面積</label>
+              <div className="flex items-center gap-2">
+                <select
+                  className="flex-1 border border-gray-300 rounded px-2 py-1.5 text-sm"
+                  value={filters.areaMin}
+                  onChange={(e) => updateFilter("areaMin", e.target.value)}
+                >
+                  {AREA_MIN_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+                <span className="text-gray-400 text-xs">〜</span>
+                <select
+                  className="flex-1 border border-gray-300 rounded px-2 py-1.5 text-sm"
+                  value={filters.areaMax}
+                  onChange={(e) => updateFilter("areaMax", e.target.value)}
+                >
+                  {AREA_MAX_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Walking minutes */}
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1.5">駅徒歩</label>
+              <select
+                className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
+                value={filters.walkMax}
+                onChange={(e) => updateFilter("walkMax", e.target.value)}
+              >
+                {WALK_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Building age */}
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1.5">築年数</label>
+              <select
+                className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
+                value={filters.ageMax}
+                onChange={(e) => updateFilter("ageMax", e.target.value)}
+              >
+                {AGE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Layout chips */}
+          <div className="mt-4">
+            <label className="block text-xs font-medium text-gray-500 mb-1.5">間取り</label>
+            <div className="flex flex-wrap gap-2">
+              {LAYOUT_OPTIONS.map((l) => (
+                <button
+                  key={l}
+                  onClick={() => toggleLayout(l)}
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors border ${
+                    filters.layouts.includes(l)
+                      ? "bg-blue-600 text-white border-blue-600"
+                      : "bg-white text-gray-600 border-gray-300 hover:border-blue-400"
+                  }`}
+                >
+                  {l}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Multi-station chips */}
+          <div className="mt-4">
+            <label className="block text-xs font-medium text-gray-500 mb-1.5">
+              駅を複数選択
+              {filters.stations.length > 0 && (
+                <span className="ml-2 text-blue-600">({filters.stations.length}駅)</span>
+              )}
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {ALL_STATIONS.map((stn) => (
+                <button
+                  key={stn}
+                  onClick={() => toggleStation(stn)}
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors border ${
+                    filters.stations.includes(stn)
+                      ? "bg-blue-600 text-white border-blue-600"
+                      : "bg-white text-gray-600 border-gray-300 hover:border-blue-400"
+                  }`}
+                >
+                  {stn}
+                </button>
+              ))}
+            </div>
+            {filters.stations.length > 0 && (
+              <p className="text-[11px] text-gray-400 mt-1">複数駅を選択すると、それぞれの駅の結果を統合して表示します</p>
+            )}
+          </div>
+
+          {/* Search with filters */}
+          <div className="mt-4 flex justify-end">
+            <button
+              onClick={() => handleSearch()}
+              disabled={loading || (!station && !city && filters.stations.length === 0)}
+              className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-medium transition-colors"
+            >
+              {loading ? "検索中..." : "この条件で検索"}
+            </button>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="bg-red-50 text-red-700 rounded-lg p-4 text-sm mb-6">{error}</div>
@@ -199,6 +548,12 @@ export default function AreaSearchPage() {
             ))}
           </div>
 
+          {sorted.length === 0 && (
+            <div className="text-center py-8 text-gray-400 text-sm">
+              条件に一致する物件が見つかりませんでした。条件を変更してお試しください。
+            </div>
+          )}
+
           {result.errors.length > 0 && (
             <div className="mt-4 text-xs text-amber-600 bg-amber-50 rounded p-2">
               {result.errors.map((e, i) => <div key={i}>{e}</div>)}
@@ -218,6 +573,10 @@ export default function AreaSearchPage() {
   );
 }
 
+
+/* ------------------------------------------------------------------ */
+/* Sub-components                                                      */
+/* ------------------------------------------------------------------ */
 
 function AreaStatsBar({ stats }: { stats: AreaStats }) {
   return (
@@ -291,7 +650,7 @@ function ListingRow({
               </a>
             ) : null}
             {listing.vs_market && (
-              <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+              <span className={`px-2 py-0.5 rounded text-xs font-bold shrink-0 ${
                 listing.vs_market === "割安" ? "bg-green-100 text-green-700" :
                 listing.vs_market === "相場並み" ? "bg-blue-100 text-blue-700" :
                 listing.vs_market === "やや割高" ? "bg-amber-100 text-amber-700" :

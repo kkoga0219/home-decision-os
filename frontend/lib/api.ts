@@ -160,13 +160,30 @@ export interface AreaSearchResult {
   errors: string[];
 }
 
-export async function searchArea(params: {
+export interface AreaSearchParams {
   station_name?: string;
   city_name?: string;
   search_url?: string;
   max_pages?: number;
-}): Promise<AreaSearchResult> {
-  return request("/connectors/area-search", { method: "POST", body: JSON.stringify(params) });
+  price_min?: number | null;
+  price_max?: number | null;
+  area_min?: number | null;
+  area_max?: number | null;
+  layouts?: string[];
+  walking_max?: number | null;
+  age_max?: number | null;
+  stations?: string[];
+}
+
+export async function searchArea(params: AreaSearchParams): Promise<AreaSearchResult> {
+  // Strip null/undefined/empty values
+  const clean: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== null && v !== undefined && v !== "" && !(Array.isArray(v) && v.length === 0)) {
+      clean[k] = v;
+    }
+  }
+  return request("/connectors/area-search", { method: "POST", body: JSON.stringify(clean) });
 }
 
 // --- Cashflow Simulation ---

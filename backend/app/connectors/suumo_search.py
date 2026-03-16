@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import re
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import httpx
 
@@ -76,6 +76,12 @@ class SuumoSearchConnector(BaseConnector):
         city_name: str = "",
         search_url: str = "",
         max_pages: int = 2,
+        price_min: int | None = None,
+        price_max: int | None = None,
+        area_min: float | None = None,
+        walking_max: int | None = None,
+        age_max: int | None = None,
+        stations: list[str] | None = None,
         **kwargs: Any,
     ) -> ConnectorResult:
         """Fetch property listings from SUUMO.
@@ -90,7 +96,30 @@ class SuumoSearchConnector(BaseConnector):
             Direct SUUMO search URL (overrides station/city)
         max_pages : int
             Maximum number of pages to fetch (default 2, ~40 listings)
+        price_min, price_max : int | None
+            Price range in 万円
+        area_min : float | None
+            Minimum floor area (㎡)
+        walking_max : int | None
+            Maximum walking minutes from station
+        age_max : int | None
+            Maximum building age in years
+        stations : list[str] | None
+            Search multiple stations (overrides station_name)
         """
+        # If multiple stations, aggregate results
+        if stations and len(stations) > 1:
+            return await self._fetch_multi_station(
+                stations=stations,
+                city_name=city_name,
+                max_pages=max_pages,
+                price_min=price_min,
+                price_max=price_max,
+                area_min=area_min,
+                walking_max=walking_max,
+                age_max=age_max,
+            )
+
         # Determine search URL
         if search_url:
             base_url = search_url
@@ -116,6 +145,18 @@ class SuumoSearchConnector(BaseConnector):
                 f"https://suumo.jp/ms/chuko/hyogo/sc_amagasaki/"
                 f"?rn={quote(keyword)}"
             )
+
+        # Append SUUMO-native query filters
+        filter_qs = _build_suumo_qs(
+            price_min=price_min,
+            price_max=price_max,
+            area_min=area_min,
+            walking_max=walking_max,
+            age_max=age_max,
+        )
+        if filter_qs:
+            sep = "&" if "?" in base_url else "?"
+            base_url = f"{base_url}{sep}{filter_qs}"
 
         all_listings: list[dict[str, Any]] = []
         errors: list[str] = []
@@ -163,6 +204,157 @@ class SuumoSearchConnector(BaseConnector):
             },
             errors=errors,
         )
+
+    async def _fetch_multi_station(
+        self,
+        stations: list[str],
+        city_name: str = "",
+        max_pages: int = 1,
+        **filter_kwargs: Any,
+    ) -> ConnectorResult:
+        """Aggregate results from multiple station searches."""
+        all_listings: list[dict[str, Any]] = []
+        errors: list[str] = []
+        search_urls: list[str] = []
+        seen_urls: set[str] = set()
+
+        for stn in stations[:5]:  # cap at 5 stations
+            result = await self.fetch(
+                station_name=stn,
+                city_name=city_name,
+                max_pages=max_pages,
+                stations=[],  # prevent recursion
+                **filter_kwargs,
+            )
+            if result.success:
+                url = result.data.get("search_url", "")
+                if url:
+                    search_urls.append(url)
+                for ls in result.data.get("listings", []):
+                    u = ls.get("url", "")
+                    if u and u not in seen_urls:
+                        seen_urls.add(u)
+                        all_listings.append(ls)
+            errors.extend(result.errors)
+
+        return ConnectorResult(
+            success=True,
+            source=self.name,
+            data={
+                "search_url": search_urls[0] if search_urls else "",
+                "total_found": len(all_listings),
+                "listings": all_listings,
+            },
+            errors=errors,
+        )
+
+
+# ---------------------------------------------------------------------------
+# SUUMO query-string builder
+# ---------------------------------------------------------------------------
+
+# SUUMO price codes (万円 → code for the pc1/pc2 parameter)
+_PRICE_CODES: list[tuple[int, str]] = [
+    (300, "0300"), (400, "0400"), (500, "0500"),
+    (600, "0600"), (700, "0700"), (800, "0800"),
+    (900, "0900"), (1000, "1000"), (1500, "1500"),
+    (2000, "2000"), (2500, "2500"), (3000, "3000"),
+    (3500, "3500"), (4000, "4000"), (4500, "4500"),
+    (5000, "5000"), (6000, "6000"), (7000, "7000"),
+    (8000, "8000"), (9000, "9000"), (10000, "10000"),
+]
+
+# Walking-minutes codes
+_WALK_CODES: dict[int, str] = {
+    1: "01", 3: "03", 5: "05", 7: "07",
+    10: "10", 15: "15", 20: "20",
+}
+
+# Age codes (築年数)
+_AGE_CODES: dict[int, str] = {
+    1: "01", 3: "03", 5: "05", 7: "07",
+    10: "10", 15: "15", 20: "20", 25: "25", 30: "30",
+}
+
+# Area codes (㎡)
+_AREA_CODES: dict[int, str] = {
+    20: "20", 25: "25", 30: "30", 40: "40",
+    50: "50", 60: "60", 70: "70", 80: "80",
+    90: "90", 100: "100",
+}
+
+
+def _nearest_code(
+    value: int | float,
+    code_map: list[tuple[int, str]] | dict[int, str],
+    mode: str = "le",
+) -> str | None:
+    """Find nearest SUUMO code ≤ or ≥ value."""
+    if isinstance(code_map, dict):
+        keys = sorted(code_map.keys())
+        if mode == "le":
+            best = None
+            for k in keys:
+                if k <= value:
+                    best = code_map[k]
+            return best
+        else:  # ge
+            for k in keys:
+                if k >= value:
+                    return code_map[k]
+            return None
+    else:  # list of tuples
+        if mode == "le":
+            best = None
+            for v, c in code_map:
+                if v <= value:
+                    best = c
+            return best
+        else:
+            for v, c in code_map:
+                if v >= value:
+                    return c
+            return None
+
+
+def _build_suumo_qs(
+    *,
+    price_min: int | None = None,
+    price_max: int | None = None,
+    area_min: float | None = None,
+    walking_max: int | None = None,
+    age_max: int | None = None,
+) -> str:
+    """Build SUUMO-compatible query string for search filters.
+
+    Returns empty string if no filters applicable.
+    """
+    params: list[tuple[str, str]] = []
+
+    if price_min is not None:
+        code = _nearest_code(price_min, _PRICE_CODES, "le")
+        if code:
+            params.append(("pc1", code))
+    if price_max is not None:
+        code = _nearest_code(price_max, _PRICE_CODES, "ge")
+        if code:
+            params.append(("pc2", code))
+    if area_min is not None:
+        code = _nearest_code(area_min, _AREA_CODES, "le")
+        if code:
+            params.append(("as1", code))
+    if walking_max is not None:
+        code = _nearest_code(walking_max, _WALK_CODES, "ge")
+        if code:
+            params.append(("wk", code))
+    if age_max is not None:
+        code = _nearest_code(age_max, _AGE_CODES, "ge")
+        if code:
+            params.append(("kz", code))
+
+    if not params:
+        return ""
+    return urlencode(params)
 
 
 # ---------------------------------------------------------------------------

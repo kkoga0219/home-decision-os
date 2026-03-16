@@ -80,6 +80,25 @@ class AreaSearchRequest(BaseModel):
     city_name: str = ""
     search_url: str = ""
     max_pages: int = Field(default=2, ge=1, le=5)
+    # Filters
+    price_min: int | None = Field(default=None, description="最低価格(万円)")
+    price_max: int | None = Field(default=None, description="最高価格(万円)")
+    area_min: float | None = Field(default=None, description="最小面積(㎡)")
+    area_max: float | None = Field(default=None, description="最大面積(㎡)")
+    layouts: list[str] = Field(
+        default_factory=list,
+        description="間取り (1K,1LDK,2LDK,3LDK,4LDK など)",
+    )
+    walking_max: int | None = Field(
+        default=None, description="徒歩分数上限",
+    )
+    age_max: int | None = Field(
+        default=None, description="築年数上限",
+    )
+    stations: list[str] = Field(
+        default_factory=list,
+        description="複数駅検索 (station_name より優先)",
+    )
 
 
 @router.post("/area-search")
@@ -97,6 +116,12 @@ async def area_search(body: AreaSearchRequest):
         city_name=body.city_name,
         search_url=body.search_url,
         max_pages=body.max_pages,
+        price_min=body.price_min,
+        price_max=body.price_max,
+        area_min=body.area_min,
+        walking_max=body.walking_max,
+        age_max=body.age_max,
+        stations=body.stations,
     )
 
     # Also fetch area stats for context
@@ -123,8 +148,21 @@ async def area_search(body: AreaSearchRequest):
     except Exception:
         pass
 
-    # Enrich listings with rent estimates
-    listings = search_result.data.get("listings", [])
+    # Post-filter listings by user criteria
+    import datetime
+
+    raw_listings = search_result.data.get("listings", [])
+    listings = _apply_filters(
+        raw_listings,
+        price_min=body.price_min,
+        price_max=body.price_max,
+        area_min=body.area_min,
+        area_max=body.area_max,
+        layouts=body.layouts,
+        walking_max=body.walking_max,
+        age_max=body.age_max,
+        current_year=datetime.date.today().year,
+    )
     enriched_listings = []
 
     rent_connector = RentEstimatorConnector()
@@ -182,6 +220,62 @@ async def area_search(body: AreaSearchRequest):
         "suumo_market": suumo_market_data,
         "errors": all_errors,
     }
+
+
+def _apply_filters(
+    listings: list[dict],
+    *,
+    price_min: int | None = None,
+    price_max: int | None = None,
+    area_min: float | None = None,
+    area_max: float | None = None,
+    layouts: list[str] | None = None,
+    walking_max: int | None = None,
+    age_max: int | None = None,
+    current_year: int = 2026,
+) -> list[dict]:
+    """Filter scraped listings by user criteria."""
+    result = []
+    # Normalise layout filter: e.g. ["2LDK","3LDK"] → {"2LDK","3LDK"}
+    layout_set: set[str] | None = None
+    if layouts:
+        layout_set = set(layouts)
+
+    for ls in listings:
+        price = ls.get("price_jpy")
+        # price filters are in 万円 units from the frontend
+        if price_min is not None and price is not None:
+            if price < price_min * 10_000:
+                continue
+        if price_max is not None and price is not None:
+            if price > price_max * 10_000:
+                continue
+
+        area = ls.get("floor_area_sqm")
+        if area_min is not None and area is not None:
+            if area < area_min:
+                continue
+        if area_max is not None and area is not None:
+            if area > area_max:
+                continue
+
+        if layout_set:
+            layout = ls.get("layout", "")
+            if layout and layout not in layout_set:
+                continue
+
+        walk = ls.get("walking_minutes")
+        if walking_max is not None and walk is not None:
+            if walk > walking_max:
+                continue
+
+        built = ls.get("built_year")
+        if age_max is not None and built is not None:
+            if (current_year - built) > age_max:
+                continue
+
+        result.append(ls)
+    return result
 
 
 # ===================================================================

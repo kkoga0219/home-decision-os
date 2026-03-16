@@ -155,9 +155,22 @@ export default function AreaSearchPage() {
       {result && (
         <div className="mb-4">
           <div className="flex justify-between items-center mb-3">
-            <p className="text-sm text-gray-600">
-              <span className="font-bold text-lg text-gray-900">{result.total_found}</span> 件の物件
-            </p>
+            <div className="flex items-center gap-3">
+              <p className="text-sm text-gray-600">
+                <span className="font-bold text-lg text-gray-900">{result.total_found}</span> 件の物件
+              </p>
+              {result.search_url && (
+                <a
+                  href={result.search_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-blue-500 hover:text-blue-700 hover:underline inline-flex items-center gap-1"
+                >
+                  SUUMOで全件表示
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                </a>
+              )}
+            </div>
             <div className="flex gap-2 items-center">
               <span className="text-xs text-gray-400">並び替え:</span>
               <select
@@ -256,9 +269,27 @@ function ListingRow({
         {/* Main info */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
-            {listing.name && (
-              <span className="font-semibold text-gray-900 truncate">{listing.name}</span>
-            )}
+            {listing.name ? (
+              listing.url ? (
+                <a href={listing.url} target="_blank" rel="noopener noreferrer" className="font-semibold text-blue-700 hover:text-blue-900 hover:underline truncate">
+                  {listing.name}
+                </a>
+              ) : (
+                <span className="font-semibold text-gray-900 truncate">{listing.name}</span>
+              )
+            ) : listing.headline ? (
+              listing.url ? (
+                <a href={listing.url} target="_blank" rel="noopener noreferrer" className="font-semibold text-blue-700 hover:text-blue-900 hover:underline truncate text-sm">
+                  {listing.headline}
+                </a>
+              ) : (
+                <span className="font-semibold text-gray-900 truncate text-sm">{listing.headline}</span>
+              )
+            ) : listing.url ? (
+              <a href={listing.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 hover:underline text-sm">
+                SUUMO詳細ページ
+              </a>
+            ) : null}
             {listing.vs_market && (
               <span className={`px-2 py-0.5 rounded text-xs font-bold ${
                 listing.vs_market === "割安" ? "bg-green-100 text-green-700" :
@@ -279,12 +310,30 @@ function ListingRow({
             {listing.layout && <span>{listing.layout}</span>}
             {listing.floor_area_sqm && <span>{listing.floor_area_sqm}㎡</span>}
             {listing.station_name && (
-              <span>{listing.station_name}駅 {listing.walking_minutes ? `徒歩${listing.walking_minutes}分` : ""}</span>
+              <span>
+                {listing.line_name ? `${listing.line_name} ` : ""}
+                {listing.station_name}駅
+                {listing.walking_minutes ? ` 徒歩${listing.walking_minutes}分` : ""}
+              </span>
             )}
             {listing.built_year && <span>築{new Date().getFullYear() - listing.built_year}年</span>}
             {listing.age_years != null && !listing.built_year && <span>築{listing.age_years}年</span>}
             {listing.floor && <span>{listing.floor}</span>}
           </div>
+          {listing.address && (
+            <p className="text-xs text-gray-400 mt-1 truncate">{listing.address}</p>
+          )}
+          {listing.url && (
+            <a
+              href={listing.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-blue-500 hover:text-blue-700 mt-1"
+            >
+              SUUMOで見る
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+            </a>
+          )}
         </div>
 
         {/* Rent & yield */}

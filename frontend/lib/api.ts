@@ -130,13 +130,18 @@ export async function enrichFromData(params: {
 export interface AreaSearchListing {
   url: string;
   name?: string;
+  headline?: string;
   price_jpy?: number;
   price_text?: string;
   layout?: string;
   floor_area_sqm?: number;
+  address?: string;
+  access?: string;
   station_name?: string;
+  line_name?: string;
   walking_minutes?: number;
   built_year?: number;
+  built_date?: string;
   age_years?: number;
   floor?: string;
   estimated_rent?: number;

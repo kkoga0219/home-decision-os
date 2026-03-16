@@ -1,8 +1,11 @@
 """SUUMO area search connector.
 
 Fetches property listings from SUUMO's search results page for a given area.
-Parses listing cards to extract basic property info without visiting each
-individual property page (much faster).
+Parses listing cards using SUUMO's actual HTML structure:
+  - .property_unit          → each listing card
+  - .property_unit-title    → headline (not always the building name)
+  - .property_unit-body dl  → structured fields (物件名, 販売価格, 所在地, etc.)
+  - .property_unit-body a   → detail page link
 
 Supported search modes:
 1. By station name (e.g. 塚口) → searches chuko mansion listings
@@ -93,38 +96,52 @@ class SuumoSearchConnector(BaseConnector):
             base_url = search_url
         elif station_name and station_name in STATION_SEARCH_AREAS:
             area_code = STATION_SEARCH_AREAS[station_name]
-            base_url = f"https://suumo.jp/ms/chuko/hyogo/{area_code}/"
+            base_url = (
+                f"https://suumo.jp/ms/chuko/hyogo/{area_code}/"
+            )
         elif city_name and city_name in CITY_CODES:
             area_code = CITY_CODES[city_name]
-            base_url = f"https://suumo.jp/ms/chuko/hyogo/{area_code}/"
+            base_url = (
+                f"https://suumo.jp/ms/chuko/hyogo/{area_code}/"
+            )
         else:
-            # Fallback: keyword search
             keyword = station_name or city_name
             if not keyword:
                 return ConnectorResult(
                     success=False,
                     source=self.name,
-                    errors=["検索条件を指定してください (station_name or city_name)"],
+                    errors=["検索条件を指定してください"],
                 )
-            base_url = f"https://suumo.jp/ms/chuko/hyogo/sc_amagasaki/?rn={quote(keyword)}"
+            base_url = (
+                f"https://suumo.jp/ms/chuko/hyogo/sc_amagasaki/"
+                f"?rn={quote(keyword)}"
+            )
 
         all_listings: list[dict[str, Any]] = []
         errors: list[str] = []
 
         try:
-            async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+            async with httpx.AsyncClient(
+                timeout=20, follow_redirects=True,
+            ) as client:
                 for page in range(1, max_pages + 1):
-                    url = base_url if page == 1 else f"{base_url}?page={page}"
+                    if page == 1:
+                        url = base_url
+                    else:
+                        sep = "&" if "?" in base_url else "?"
+                        url = f"{base_url}{sep}page={page}"
                     logger.info("Fetching SUUMO page %d: %s", page, url)
 
                     resp = await client.get(url, headers=HEADERS)
                     if resp.status_code != 200:
-                        errors.append(f"Page {page}: HTTP {resp.status_code}")
+                        errors.append(
+                            f"Page {page}: HTTP {resp.status_code}"
+                        )
                         break
 
                     listings = _parse_listing_page(resp.text)
                     if not listings:
-                        break  # No more results
+                        break
 
                     all_listings.extend(listings)
 
@@ -133,7 +150,7 @@ class SuumoSearchConnector(BaseConnector):
             return ConnectorResult(
                 success=False,
                 source=self.name,
-                errors=[f"SUUMO検索エラー: {str(e)}"],
+                errors=[f"SUUMO検索エラー: {e!s}"],
             )
 
         return ConnectorResult(
@@ -148,163 +165,223 @@ class SuumoSearchConnector(BaseConnector):
         )
 
 
-def _parse_listing_page(html: str) -> list[dict[str, Any]]:
-    """Parse a SUUMO search results page and extract listing cards.
+# ---------------------------------------------------------------------------
+# HTML parsing – based on SUUMO's actual DOM structure
+# ---------------------------------------------------------------------------
 
-    SUUMO listing pages contain property cards with structured info.
-    We parse the full page text and extract repeating patterns.
+def _parse_listing_page(html: str) -> list[dict[str, Any]]:
+    """Parse a SUUMO search results page.
+
+    SUUMO structure (confirmed 2026-03):
+      .property_unit
+        .property_unit-header
+          h2.property_unit-title  ← headline (promotional, NOT building name)
+        .property_unit-body
+          dl: dt="物件名"  dd="武庫之荘パークハイツ"   ← building name
+          dl: dt="販売価格" dd="1180万円"
+          dl: dt="所在地"  dd="兵庫県尼崎市南武庫之荘３-36-16"
+          dl: dt="沿線・駅" dd='阪急神戸線「武庫之荘」徒歩4分'
+          table.dottable-fix:
+            dl: dt="専有面積" dd="46.05m2（13.93坪）（壁芯）"
+            dl: dt="間取り"  dd="1LDK"
+          dl: dt="バルコニー" dd="1m2"
+          dl: dt="築年月"   dd="1978年11月"
+          a[href*="/ms/chuko/"] ← detail page URL
     """
     listings: list[dict[str, Any]] = []
 
-    # Extract individual property links
-    # Pattern: /ms/chuko/PREFECTURE/CITY/nc_DIGITS/
-    detail_links = re.findall(
-        r'href="(https?://suumo\.jp/ms/chuko/[^"]*nc_\d+/[^"]*)"', html
+    # Split HTML by property_unit boundaries
+    # Each card starts with <div class="property_unit...">
+    card_chunks = re.split(
+        r'<div\s+class="property_unit(?:\s|")', html,
     )
-    if not detail_links:
-        # Try relative links
-        detail_links = [
-            f"https://suumo.jp{link}"
-            for link in re.findall(r'href="(/ms/chuko/[^"]*nc_\d+/[^"]*)"', html)
-        ]
 
-    # Deduplicate
-    seen_urls: set[str] = set()
-    unique_links: list[str] = []
-    for link in detail_links:
-        # Normalize URL
-        clean = link.split("?")[0]
-        if clean not in seen_urls:
-            seen_urls.add(clean)
-            unique_links.append(clean)
-
-    # Try to parse property cards from the HTML
-    # SUUMO uses various div structures; we'll parse text blocks between property links
-    # Each listing card typically contains: name, price, station/access, area, layout, age
-
-    # Strategy: split the HTML by property detail links, parse each chunk
-    # If that fails, fall back to parsing the full text for repeating patterns
-
-    # First attempt: parse structured data from repeated HTML patterns
-    # Look for property name patterns in the raw HTML
-    card_blocks = _split_into_cards(html, unique_links)
-
-    for i, (url, card_html) in enumerate(card_blocks):
-        listing = _parse_card(card_html, url)
+    for chunk in card_chunks[1:]:  # skip before first card
+        listing = _parse_property_unit(chunk)
         if listing:
             listings.append(listing)
-
-    # If card parsing yielded nothing, try text-based extraction
-    if not listings and unique_links:
-        for url in unique_links[:20]:  # Max 20
-            listings.append({
-                "url": url,
-                "name": f"物件 {len(listings) + 1}",
-                "parse_method": "link_only",
-            })
 
     return listings
 
 
-def _split_into_cards(html: str, urls: list[str]) -> list[tuple[str, str]]:
-    """Split HTML into chunks, one per property listing."""
-    cards: list[tuple[str, str]] = []
+def _parse_property_unit(chunk: str) -> dict[str, Any] | None:
+    """Parse a single property_unit chunk into a listing dict."""
+    info: dict[str, Any] = {"parse_method": "structured"}
 
-    # Find positions of each URL in the HTML
-    positions: list[tuple[int, str]] = []
-    for url in urls:
-        # Search for the URL or its relative form
-        rel_url = url.replace("https://suumo.jp", "")
-        pos = html.find(rel_url)
-        if pos == -1:
-            pos = html.find(url)
-        if pos >= 0:
-            positions.append((pos, url))
-
-    positions.sort(key=lambda x: x[0])
-
-    # Extract chunks between consecutive URLs (with some look-back)
-    for i, (pos, url) in enumerate(positions):
-        start = max(0, pos - 2000)  # Look back for card start
-        if i + 1 < len(positions):
-            end = positions[i + 1][0]
-        else:
-            end = min(pos + 3000, len(html))
-        cards.append((url, html[start:end]))
-
-    return cards
-
-
-def _parse_card(card_html: str, url: str) -> dict[str, Any] | None:
-    """Parse a single property card chunk."""
-    text = _strip_tags(card_html)
-    info: dict[str, Any] = {"url": url, "parse_method": "card"}
-
-    # Property name: look for text near the URL or in heading-like elements
-    # Try to find the property/mansion name
-    m = re.search(r'class="[^"]*property[_-]?name[^"]*"[^>]*>([^<]+)', card_html, re.IGNORECASE)
-    if not m:
-        m = re.search(r'<h[23][^>]*>([^<]{3,40})</h[23]>', card_html)
-    if not m:
-        # Try from text: first substantial text before price
-        _name_re = (
-            r'([ぁ-んァ-ヶ一-龠Ａ-Ｚａ-ｚ\w]{2,30}'
-            r'(?:マンション|レジデンス|ハウス|タワー|コート|パーク'
-            r'|プラウド|グラン|ルネ|ライオンズ|サーパス|エスリード'
-            r'|ワコーレ|アドリーム|ジオ|ブランズ))'
+    # --- Detail page URL ---
+    m = re.search(
+        r'href="(/ms/chuko/[^"]*nc_\d+/[^"]*)"', chunk,
+    )
+    if m:
+        info["url"] = f"https://suumo.jp{m.group(1)}"
+    else:
+        m2 = re.search(
+            r'href="(https?://suumo\.jp/ms/chuko/[^"]*nc_\d+/[^"]*)"',
+            chunk,
         )
-        m = re.search(_name_re, text)
-    if m:
-        info["name"] = m.group(1).strip()
+        if m2:
+            info["url"] = m2.group(1)
 
-    # Price
-    m = re.search(r"([\d,]+)\s*万円", text)
-    if m:
-        info["price_jpy"] = int(m.group(1).replace(",", "")) * 10_000
-        info["price_text"] = m.group(0)
+    # --- Parse all dl > dt/dd pairs (the core structured data) ---
+    fields = _extract_dl_fields(chunk)
 
-    # Layout
-    m = re.search(r"(\d[LDKSR]{1,4})", text, re.IGNORECASE)
-    if m:
-        info["layout"] = m.group(1).upper()
+    # 物件名 (building/mansion name)
+    if "物件名" in fields:
+        info["name"] = fields["物件名"]
 
-    # Area
-    m = re.search(r"([\d.]+)\s*[㎡m²]", text)
-    if m:
-        info["floor_area_sqm"] = float(m.group(1))
+    # 販売価格
+    if "販売価格" in fields:
+        price_text = fields["販売価格"]
+        info["price_text"] = price_text
+        m = re.search(r"([\d,]+)\s*万円", price_text)
+        if m:
+            info["price_jpy"] = (
+                int(m.group(1).replace(",", "")) * 10_000
+            )
 
-    # Station / walking
-    m = re.search(r"「?([^」\s]{2,8})」?駅", text)
-    if m:
-        info["station_name"] = m.group(1)
-    m = re.search(r"徒歩\s*(\d+)\s*分", text)
-    if m:
-        info["walking_minutes"] = int(m.group(1))
+    # 所在地
+    if "所在地" in fields:
+        info["address"] = fields["所在地"]
 
-    # Built year
-    m = re.search(r"築(\d+)年", text)
-    if m:
-        info["age_years"] = int(m.group(1))
-    m = re.search(r"(\d{4})年\d{0,2}月?築", text)
-    if m:
-        info["built_year"] = int(m.group(1))
+    # 沿線・駅 → station name + walking minutes
+    access = fields.get("沿線・駅", "")
+    if access:
+        info["access"] = access
+        # 「武庫之荘」 or 「塚口」 etc.
+        m = re.search(r"「([^」]+)」", access)
+        if m:
+            info["station_name"] = m.group(1)
+        # 徒歩N分
+        m = re.search(r"徒歩(\d+)分", access)
+        if m:
+            info["walking_minutes"] = int(m.group(1))
+        # 路線名
+        m = re.search(r"^([^「]+?)「", access)
+        if m:
+            info["line_name"] = m.group(1).strip()
 
-    # Floor
-    m = re.search(r"(\d+)階", text)
-    if m:
-        info["floor"] = m.group(0)
+    # 専有面積
+    area_text = fields.get("専有面積", "")
+    if area_text:
+        m = re.search(r"([\d.]+)\s*m", area_text)
+        if m:
+            info["floor_area_sqm"] = float(m.group(1))
 
-    # Only return if we got at least a price or name
+    # 間取り
+    if "間取り" in fields:
+        info["layout"] = fields["間取り"].strip()
+
+    # 築年月
+    built_text = fields.get("築年月", "")
+    if built_text:
+        info["built_date"] = built_text
+        m = re.search(r"(\d{4})年", built_text)
+        if m:
+            info["built_year"] = int(m.group(1))
+
+    # バルコニー
+    balcony_text = fields.get("バルコニー", "")
+    if balcony_text:
+        m = re.search(r"([\d.]+)\s*m", balcony_text)
+        if m:
+            info["balcony_sqm"] = float(m.group(1))
+
+    # --- Fallback: if no 物件名 from dl, try from title ---
+    if "name" not in info:
+        m = re.search(
+            r'class="property_unit-title[^"]*"[^>]*>(.*?)</h',
+            chunk,
+            re.DOTALL,
+        )
+        if m:
+            title_text = _strip_tags(m.group(1)).strip()
+            # Title is often promotional; try to extract building name
+            name = _extract_building_name_from_title(title_text)
+            if name:
+                info["name"] = name
+            else:
+                info["headline"] = title_text[:80]
+
+    # Only return if we got useful data
     if "price_jpy" in info or "name" in info:
         return info
 
     return None
 
 
+def _extract_dl_fields(html: str) -> dict[str, str]:
+    """Extract all dt/dd pairs from dl elements in a chunk.
+
+    Handles SUUMO's structure where each property field is a
+    <dl><dt>label</dt><dd>value</dd></dl>.
+    """
+    fields: dict[str, str] = {}
+
+    # Match <dl>...<dt>LABEL</dt>...<dd>VALUE</dd>...</dl>
+    for m in re.finditer(
+        r"<dl[^>]*>\s*<dt[^>]*>(.*?)</dt>\s*<dd[^>]*>(.*?)</dd>",
+        html,
+        re.DOTALL,
+    ):
+        label = _strip_tags(m.group(1)).strip()
+        value = _strip_tags(m.group(2)).strip()
+        if label and value:
+            # Keep first occurrence of each label (most relevant)
+            if label not in fields:
+                fields[label] = value
+
+    return fields
+
+
+def _extract_building_name_from_title(title: str) -> str | None:
+    """Try to extract a building name from a promotional title.
+
+    SUUMO titles are often like:
+    "頭金０円ローン可【本日見学可】阪急武庫之荘駅徒歩4分 リフォーム物件"
+    These are NOT building names. We skip these.
+
+    Real building names look like:
+    "武庫之荘パークハイツ" "プラウド塚口" "グランドメゾン武庫之荘"
+    """
+    # If the title contains promotional keywords, it's not a name
+    promo_keywords = [
+        "頭金", "ローン", "見学", "リフォーム", "リノベ",
+        "即入居", "駅徒歩", "新価格", "値下", "オープン",
+        "ペット", "角部屋", "最上階", "フル",
+    ]
+    if any(kw in title for kw in promo_keywords):
+        return None
+
+    # Check if it looks like a building name (contains typical suffixes)
+    name_suffixes = [
+        "マンション", "レジデンス", "ハウス", "タワー", "コート",
+        "パーク", "プラウド", "グラン", "ルネ", "ライオンズ",
+        "サーパス", "エスリード", "ワコーレ", "アドリーム",
+        "ジオ", "ブランズ", "ハイツ", "パレス", "メゾン",
+        "シャトー", "ロイヤル", "コスモ", "ダイアパレス",
+        "朝日プラザ", "藤和", "ネオ", "セレッソ",
+    ]
+    if any(s in title for s in name_suffixes):
+        return title.strip()
+
+    # If short enough and looks like a proper name, keep it
+    if len(title) <= 25 and not re.search(r"[！!？?。]", title):
+        return title.strip()
+
+    return None
+
+
 def _strip_tags(html: str) -> str:
     """Remove HTML tags, collapse whitespace."""
-    text = re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=re.DOTALL | re.IGNORECASE)
-    text = re.sub(r"<style[^>]*>.*?</style>", " ", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(
+        r"<script[^>]*>.*?</script>", " ",
+        html, flags=re.DOTALL | re.IGNORECASE,
+    )
+    text = re.sub(
+        r"<style[^>]*>.*?</style>", " ",
+        text, flags=re.DOTALL | re.IGNORECASE,
+    )
+    text = re.sub(r"<sup[^>]*>.*?</sup>", "", text, flags=re.DOTALL)
     text = re.sub(r"<[^>]+>", " ", text)
     text = re.sub(r"&nbsp;", " ", text)
     text = re.sub(r"&amp;", "&", text)

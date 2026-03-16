@@ -125,6 +125,26 @@ const AGE_OPTIONS = [
 /* Filter state type                                                   */
 /* ------------------------------------------------------------------ */
 
+const SOURCE_OPTIONS = [
+  { key: "suumo", label: "SUUMO", color: "bg-green-100 text-green-700 border-green-300" },
+  { key: "homes", label: "HOME'S", color: "bg-purple-100 text-purple-700 border-purple-300" },
+  { key: "athome", label: "athome", color: "bg-orange-100 text-orange-700 border-orange-300" },
+] as const;
+
+function sourceLabel(src: string): string {
+  if (src === "suumo") return "SUUMO";
+  if (src === "homes") return "HOME'S";
+  if (src === "athome") return "athome";
+  return src;
+}
+
+function sourceBadgeClass(src: string): string {
+  if (src === "suumo") return "bg-green-100 text-green-700";
+  if (src === "homes") return "bg-purple-100 text-purple-700";
+  if (src === "athome") return "bg-orange-100 text-orange-700";
+  return "bg-gray-100 text-gray-700";
+}
+
 interface Filters {
   priceMin: string;
   priceMax: string;
@@ -134,6 +154,7 @@ interface Filters {
   walkMax: string;
   ageMax: string;
   stations: string[];
+  sources: string[];
 }
 
 const INITIAL_FILTERS: Filters = {
@@ -145,6 +166,7 @@ const INITIAL_FILTERS: Filters = {
   walkMax: "",
   ageMax: "",
   stations: [],
+  sources: ["suumo", "homes", "athome"],
 };
 
 
@@ -187,6 +209,16 @@ export default function AreaSearchPage() {
     }));
   }
 
+  function toggleSource(src: string) {
+    setFilters((prev) => {
+      const next = prev.sources.includes(src)
+        ? prev.sources.filter((s) => s !== src)
+        : [...prev.sources, src];
+      // Keep at least one source selected
+      return next.length > 0 ? { ...prev, sources: next } : prev;
+    });
+  }
+
   function resetFilters() {
     setFilters(INITIAL_FILTERS);
   }
@@ -200,7 +232,8 @@ export default function AreaSearchPage() {
       filters.layouts.length > 0 ||
       filters.walkMax !== "" ||
       filters.ageMax !== "" ||
-      filters.stations.length > 0
+      filters.stations.length > 0 ||
+      filters.sources.length < 3
     );
   }
 
@@ -236,6 +269,7 @@ export default function AreaSearchPage() {
       if (filters.walkMax) params.walking_max = parseInt(filters.walkMax);
       if (filters.ageMax) params.age_max = parseInt(filters.ageMax);
       if (filters.stations.length > 0) params.stations = filters.stations;
+      if (filters.sources.length < 3) params.sources = filters.sources;
 
       const res = await searchArea(params);
       setResult(res);
@@ -490,6 +524,27 @@ export default function AreaSearchPage() {
             </div>
           </div>
 
+          {/* Source selection */}
+          <div className="mt-4">
+            <label className="block text-xs font-medium text-gray-500 mb-1.5">検索サイト</label>
+            <div className="flex flex-wrap gap-2">
+              {SOURCE_OPTIONS.map((s) => (
+                <button
+                  key={s.key}
+                  onClick={() => toggleSource(s.key)}
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors border ${
+                    filters.sources.includes(s.key)
+                      ? s.color
+                      : "bg-gray-50 text-gray-400 border-gray-200"
+                  }`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+            <p className="text-[11px] text-gray-400 mt-1">複数サイトを横断検索してお宝物件を発見</p>
+          </div>
+
           {/* Multi-station chips (grouped by prefecture) */}
           <div className="mt-4">
             <label className="block text-xs font-medium text-gray-500 mb-1.5">
@@ -551,7 +606,19 @@ export default function AreaSearchPage() {
               <p className="text-sm text-gray-600">
                 <span className="font-bold text-lg text-gray-900">{result.total_found}</span> 件の物件
               </p>
-              {result.search_url && (
+              {result.search_urls && Object.entries(result.search_urls as Record<string, string>).map(([src, url]) => url ? (
+                <a
+                  key={src}
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-blue-500 hover:text-blue-700 hover:underline inline-flex items-center gap-1"
+                >
+                  {sourceLabel(src)}で見る
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                </a>
+              ) : null)}
+              {!(result.search_urls) && result.search_url && (
                 <a
                   href={result.search_url}
                   target="_blank"
@@ -608,8 +675,8 @@ export default function AreaSearchPage() {
       {loading && (
         <div className="text-center py-12 text-gray-500">
           <div className="inline-block w-8 h-8 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mb-3" />
-          <p className="text-sm">SUUMOから物件データを取得中...</p>
-          <p className="text-xs text-gray-400">エリア相場・賃料推定も同時に計算しています</p>
+          <p className="text-sm">複数サイトから物件データを取得中...</p>
+          <p className="text-xs text-gray-400">SUUMO・HOME&apos;S・athomeを横断検索しています</p>
         </div>
       )}
     </div>
@@ -671,6 +738,11 @@ function ListingRow({
         {/* Main info */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
+            {listing.source && (
+              <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 ${sourceBadgeClass(listing.source)}`}>
+                {sourceLabel(listing.source)}
+              </span>
+            )}
             {listing.name ? (
               listing.url ? (
                 <a href={listing.url} target="_blank" rel="noopener noreferrer" className="font-semibold text-blue-700 hover:text-blue-900 hover:underline truncate">
@@ -689,7 +761,7 @@ function ListingRow({
               )
             ) : listing.url ? (
               <a href={listing.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 hover:underline text-sm">
-                SUUMO詳細ページ
+                物件詳細ページ
               </a>
             ) : null}
             {listing.vs_market && (
@@ -732,7 +804,7 @@ function ListingRow({
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 text-xs text-blue-500 hover:text-blue-700 mt-1"
             >
-              SUUMOで見る
+              {sourceLabel(listing.source || "suumo")}で見る
               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
             </a>
           )}

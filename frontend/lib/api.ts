@@ -149,11 +149,13 @@ export interface AreaSearchListing {
   vs_market_pct?: number;
   vs_market?: string;
   parse_method?: string;
+  source?: string;
 }
 
 export interface AreaSearchResult {
   success: boolean;
   search_url: string;
+  search_urls?: Record<string, string>;
   total_found: number;
   listings: AreaSearchListing[];
   area_stats: import("./types").AreaStats | null;
@@ -174,6 +176,7 @@ export interface AreaSearchParams {
   walking_max?: number | null;
   age_max?: number | null;
   stations?: string[];
+  sources?: string[];
 }
 
 export async function searchArea(params: AreaSearchParams): Promise<AreaSearchResult> {

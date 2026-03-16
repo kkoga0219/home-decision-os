@@ -20,6 +20,8 @@ from app.connectors.mlit_transaction import (
     prefecture_name_to_code,
     station_stats_to_area_data,
 )
+from app.connectors.athome_search import AthomeSearchConnector
+from app.connectors.homes_search import HomesSearchConnector
 from app.connectors.rent_estimator import RentEstimatorConnector
 from app.connectors.suumo_market import SuumoMarketConnector
 from app.connectors.suumo_search import SuumoSearchConnector
@@ -100,62 +102,117 @@ class AreaSearchRequest(BaseModel):
         default_factory=list,
         description="複数駅検索 (station_name より優先)",
     )
+    sources: list[str] = Field(
+        default_factory=lambda: ["suumo", "homes", "athome"],
+        description="検索ソース (suumo, homes, athome)",
+    )
 
 
 @router.post("/area-search")
 async def area_search(body: AreaSearchRequest):
-    """Search SUUMO for property listings in a given area.
+    """Search multiple listing sites for properties in a given area.
 
-    Returns a list of properties with basic info (price, area, layout, etc.)
-    plus area market statistics for context.
-
-    Example: station_name="塚口" → fetches all chuko mansion listings near 塚口
+    Searches SUUMO, LIFULL HOME'S, and athome concurrently,
+    merges results, and enriches with rent/market data.
     """
-    connector = SuumoSearchConnector()
-    search_result = await connector.fetch(
+    import asyncio
+    import datetime
+
+    sources = [s.lower() for s in body.sources] if body.sources else [
+        "suumo", "homes", "athome",
+    ]
+
+    # --- 1. Fetch listings from all requested sources concurrently ---
+    search_kwargs: dict = dict(
         station_name=body.station_name,
         city_name=body.city_name,
-        search_url=body.search_url,
         prefecture=body.prefecture,
         max_pages=body.max_pages,
-        price_min=body.price_min,
-        price_max=body.price_max,
-        area_min=body.area_min,
-        walking_max=body.walking_max,
-        age_max=body.age_max,
-        stations=body.stations,
     )
 
-    # Also fetch area stats for context
+    async def _fetch_suumo():
+        c = SuumoSearchConnector()
+        return await c.fetch(
+            **search_kwargs,
+            search_url=body.search_url,
+            price_min=body.price_min,
+            price_max=body.price_max,
+            area_min=body.area_min,
+            walking_max=body.walking_max,
+            age_max=body.age_max,
+            stations=body.stations,
+        )
+
+    async def _fetch_homes():
+        c = HomesSearchConnector()
+        return await c.fetch(**search_kwargs)
+
+    async def _fetch_athome():
+        c = AthomeSearchConnector()
+        return await c.fetch(**search_kwargs)
+
+    connector_tasks: list = []
+    connector_names: list[str] = []
+    if "suumo" in sources:
+        connector_tasks.append(_fetch_suumo())
+        connector_names.append("suumo")
+    if "homes" in sources:
+        connector_tasks.append(_fetch_homes())
+        connector_names.append("homes")
+    if "athome" in sources:
+        connector_tasks.append(_fetch_athome())
+        connector_names.append("athome")
+
+    results = await asyncio.gather(*connector_tasks, return_exceptions=True)
+
+    # Merge listings + collect errors / search_urls
+    all_raw_listings: list[dict] = []
+    all_errors: list[str] = []
+    search_urls: dict[str, str] = {}
+    any_success = False
+
+    for name, res in zip(connector_names, results):
+        if isinstance(res, Exception):
+            all_errors.append(f"{name}: {res!s}")
+            continue
+        if res.success:
+            any_success = True
+        all_errors.extend(res.errors)
+        search_urls[name] = res.data.get("search_url", "")
+        all_raw_listings.extend(res.data.get("listings", []))
+
+    # --- 2. Area stats + market data (concurrent) ---
     area_connector = AreaStatsConnector()
-    area_result = await area_connector.fetch(
+    area_coro = area_connector.fetch(
         station_name=body.station_name,
         city_name=body.city_name,
     )
 
-    # Fetch SUUMO real market data for better rent estimates
-    rental_market_data = None
-    suumo_market_data = None
-    market_errors: list[str] = []
-    try:
-        market_connector = SuumoMarketConnector()
-        market_result = await market_connector.fetch(
+    async def _fetch_market():
+        mc = SuumoMarketConnector()
+        return await mc.fetch(
             station_name=body.station_name,
             city_name=body.city_name,
         )
-        if market_result.success:
-            suumo_market_data = market_result.data
-            rental_market_data = market_result.data.get("rental_market")
-        market_errors = market_result.errors
-    except Exception:
-        pass
 
-    # Post-filter listings by user criteria
-    import datetime
+    area_result, market_raw = await asyncio.gather(
+        area_coro, _fetch_market(), return_exceptions=True,
+    )
 
-    raw_listings = search_result.data.get("listings", [])
+    rental_market_data = None
+    suumo_market_data = None
+    if not isinstance(market_raw, Exception):
+        if market_raw.success:
+            suumo_market_data = market_raw.data
+            rental_market_data = market_raw.data.get("rental_market")
+        all_errors.extend(market_raw.errors)
+
+    if isinstance(area_result, Exception):
+        area_result = None
+
+    # --- 3. Post-filter ---
     listings = _apply_filters(
-        raw_listings,
+        all_raw_listings,
         price_min=body.price_min,
         price_max=body.price_max,
         area_min=body.area_min,
@@ -165,17 +222,28 @@ async def area_search(body: AreaSearchRequest):
         age_max=body.age_max,
         current_year=datetime.date.today().year,
     )
-    enriched_listings = []
 
+    # --- 4. Enrich each listing with rent estimate + market comparison ---
+    enriched_listings: list[dict] = []
     rent_connector = RentEstimatorConnector()
-    prefecture = area_result.data.get("prefecture", "") if area_result.success else ""
-    area_avg_unit = area_result.data.get("avg_unit_price_sqm") if area_result.success else None
-    avg_70 = area_result.data.get("avg_price_70sqm", 0) if area_result.success else 0
+
+    area_ok = area_result and not isinstance(area_result, Exception)
+    prefecture = (
+        area_result.data.get("prefecture", "")
+        if area_ok and area_result.success else ""
+    )
+    area_avg_unit = (
+        area_result.data.get("avg_unit_price_sqm")
+        if area_ok and area_result.success else None
+    )
+    avg_70 = (
+        area_result.data.get("avg_price_70sqm", 0)
+        if area_ok and area_result.success else 0
+    )
 
     for listing in listings:
         price = listing.get("price_jpy")
         if price and price > 0:
-            # Rent estimate (using SUUMO real data when available)
             try:
                 rent_result = await rent_connector.fetch(
                     price_jpy=price,
@@ -188,16 +256,23 @@ async def area_search(body: AreaSearchRequest):
                     rental_market_data=rental_market_data,
                 )
                 if rent_result.success:
-                    listing["estimated_rent"] = rent_result.data["estimated_rent"]
-                    listing["gross_yield"] = rent_result.data["gross_yield"]
-                    listing["rent_confidence"] = rent_result.data.get("confidence", "low")
+                    listing["estimated_rent"] = (
+                        rent_result.data["estimated_rent"]
+                    )
+                    listing["gross_yield"] = (
+                        rent_result.data["gross_yield"]
+                    )
+                    listing["rent_confidence"] = (
+                        rent_result.data.get("confidence", "low")
+                    )
             except Exception:
                 pass
 
-            # Market comparison
             if avg_70 > 0:
                 area_sqm = listing.get("floor_area_sqm", 70)
-                normalized = price * 70 / area_sqm if area_sqm else price
+                normalized = (
+                    price * 70 / area_sqm if area_sqm else price
+                )
                 diff = round((normalized / avg_70 - 1) * 100, 1)
                 listing["vs_market_pct"] = diff
                 listing["vs_market"] = (
@@ -209,16 +284,25 @@ async def area_search(body: AreaSearchRequest):
 
         enriched_listings.append(listing)
 
-    all_errors = search_result.errors + market_errors
-    if not area_result.success:
+    if area_ok and not area_result.success:
         all_errors.extend(area_result.errors)
 
+    # Primary search URL: prefer SUUMO, fallback to first available
+    primary_url = (
+        search_urls.get("suumo")
+        or next(iter(search_urls.values()), "")
+    )
+
     return {
-        "success": search_result.success,
-        "search_url": search_result.data.get("search_url", ""),
+        "success": any_success,
+        "search_url": primary_url,
+        "search_urls": search_urls,
         "total_found": len(enriched_listings),
         "listings": enriched_listings,
-        "area_stats": area_result.data if area_result.success else None,
+        "area_stats": (
+            area_result.data
+            if area_ok and area_result.success else None
+        ),
         "suumo_market": suumo_market_data,
         "errors": all_errors,
     }

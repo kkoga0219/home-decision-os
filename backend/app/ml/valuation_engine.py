@@ -215,7 +215,7 @@ async def run_valuation(
     layout: str = "",
     station_name: str = "",
     city_name: str = "",
-    prefecture: str = "兵庫県",
+    prefecture: str = "",
     rental_market_data: dict | None = None,
 ) -> ValuationReport:
     """Run full ML valuation pipeline.
@@ -244,8 +244,24 @@ async def run_valuation(
 
     # Resolve codes
     pref_code = prefecture_name_to_code(prefecture)
+    if not pref_code and station_name:
+        # Infer from station name
+        inferred = _infer_location(station_name)
+        if inferred:
+            pref_code = inferred[0]
     if not pref_code:
-        pref_code = "28"  # Default: Hyogo
+        logger.warning("Could not determine prefecture for: %s", prefecture)
+        report.errors.append(f"都道府県コードを特定できません: {prefecture}")
+        report.exit_score = calc_ml_exit_score(
+            dataset=None,
+            walking_minutes=walking_minutes,
+            floor_area=floor_area,
+            layout=layout,
+            age_years=age_years,
+            station_name=station_name,
+        )
+        return report
+
     city_code = city_name_to_code(city_name) if city_name else ""
 
     # If no city code, try to infer from station name
@@ -341,9 +357,12 @@ async def run_valuation(
 
     try:
         pref_yield = {
-            "兵庫県": 0.055, "大阪府": 0.050, "東京都": 0.042,
-            "京都府": 0.050, "神奈川県": 0.048,
-        }.get(prefecture, 0.055)
+            "東京都": 0.042, "神奈川県": 0.048, "千葉県": 0.055,
+            "埼玉県": 0.055, "大阪府": 0.050, "兵庫県": 0.055,
+            "京都府": 0.050, "愛知県": 0.052, "福岡県": 0.055,
+            "北海道": 0.060, "宮城県": 0.058, "広島県": 0.056,
+            "静岡県": 0.058, "岡山県": 0.060,
+        }.get(prefecture, 0.058)
 
         cap_rates = calibrate_cap_rates(
             dataset,
@@ -383,16 +402,41 @@ async def run_valuation(
 # Helpers
 # ===================================================================
 
-# Neighboring city clusters for data augmentation
+# Neighboring city clusters for data augmentation (key metro areas)
 _CITY_NEIGHBORS: dict[str, list[str]] = {
-    "28202": ["28204", "28207"],  # 尼崎 → 西宮, 伊丹
-    "28204": ["28202", "28206"],  # 西宮 → 尼崎, 芦屋
-    "28206": ["28204", "28101"],  # 芦屋 → 西宮, 神戸東灘
-    "28207": ["28202", "28214"],  # 伊丹 → 尼崎, 宝塚
-    "28214": ["28207", "28217"],  # 宝塚 → 伊丹, 川西
-    "28101": ["28102", "28206"],  # 神戸東灘 → 神戸灘, 芦屋
-    "27203": ["27205", "28202"],  # 豊中 → 吹田, 尼崎
-    "27205": ["27203"],           # 吹田 → 豊中
+    # 兵庫
+    "28202": ["28204", "28207"],       # 尼崎 → 西宮, 伊丹
+    "28204": ["28202", "28206"],       # 西宮 → 尼崎, 芦屋
+    "28206": ["28204", "28101"],       # 芦屋 → 西宮, 神戸東灘
+    "28207": ["28202", "28214"],       # 伊丹 → 尼崎, 宝塚
+    "28214": ["28207", "28217"],       # 宝塚 → 伊丹, 川西
+    "28101": ["28102", "28206"],       # 神戸東灘 → 神戸灘, 芦屋
+    "28110": ["28101", "28102"],       # 神戸中央 → 東灘, 灘
+    # 大阪
+    "27203": ["27205", "28202"],       # 豊中 → 吹田, 尼崎
+    "27205": ["27203", "27211"],       # 吹田 → 豊中, 茨木
+    "27127": ["27128", "27123"],       # 大阪北 → 中央, 淀川
+    "27128": ["27127", "27109"],       # 大阪中央 → 北, 天王寺
+    # 東京23区 (隣接区)
+    "13104": ["13113", "13116"],       # 新宿 → 渋谷, 豊島
+    "13113": ["13104", "13110"],       # 渋谷 → 新宿, 目黒
+    "13110": ["13113", "13112"],       # 目黒 → 渋谷, 世田谷
+    "13112": ["13110", "13111"],       # 世田谷 → 目黒, 大田
+    "13103": ["13102", "13113"],       # 港 → 中央, 渋谷
+    "13102": ["13103", "13101"],       # 中央 → 港, 千代田
+    "13116": ["13104", "13119"],       # 豊島 → 新宿, 板橋
+    "13108": ["13102", "13107"],       # 江東 → 中央, 墨田
+    # 横浜
+    "14109": ["14117", "14118"],       # 港北 → 青葉, 都筑
+    "14104": ["14103", "14105"],       # 横浜中 → 西, 南
+    # 名古屋
+    "23106": ["23105", "23107"],       # 名古屋中 → 中村, 昭和
+    "23101": ["23106", "23102"],       # 千種 → 中, 東
+    # 福岡
+    "40133": ["40132", "40134"],       # 中央 → 博多, 南
+    "40132": ["40133", "40131"],       # 博多 → 中央, 東
+    # 札幌
+    "01101": ["01102", "01105"],       # 中央 → 北, 豊平
 }
 
 
@@ -401,25 +445,26 @@ def _get_neighboring_cities(city_code: str) -> list[str]:
     return _CITY_NEIGHBORS.get(city_code, [])
 
 
-# Station → city code mapping for inference
-_STATION_CITY_MAP = {
-    "塚口": "28202", "武庫之荘": "28202", "立花": "28202",
-    "尼崎": "28202", "園田": "28202",
-    "西宮北口": "28204", "夙川": "28204", "甲子園": "28204",
-    "芦屋": "28206", "伊丹": "28207",
-    "三宮": "28110", "六甲道": "28101", "住吉": "28101",
-    "宝塚": "28214", "梅田": "27127", "新大阪": "27127",
-    "江坂": "27205", "千里中央": "27205",
-    "豊中": "27203",
-}
+def _infer_location(station_name: str) -> tuple[str, str] | None:
+    """Infer (pref_code, city_code) from station name.
+
+    Uses the shared station location map from enrichment.
+    """
+    try:
+        from app.connectors.enrichment import _STATION_LOCATION_MAP
+        if station_name in _STATION_LOCATION_MAP:
+            return _STATION_LOCATION_MAP[station_name]
+        for known, codes in _STATION_LOCATION_MAP.items():
+            if known in station_name or station_name in known:
+                return codes
+    except ImportError:
+        pass
+    return None
 
 
 def _infer_city_code(station_name: str, pref_code: str) -> str:
     """Try to infer city code from station name."""
-    if station_name in _STATION_CITY_MAP:
-        return _STATION_CITY_MAP[station_name]
-    # Fuzzy match
-    for stn, code in _STATION_CITY_MAP.items():
-        if stn in station_name or station_name in stn:
-            return code
+    result = _infer_location(station_name)
+    if result:
+        return result[1]
     return ""

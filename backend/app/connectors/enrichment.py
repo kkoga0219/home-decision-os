@@ -247,7 +247,7 @@ async def _enrich_with_ml_valuation(
             layout=layout,
             station_name=station_name,
             city_name=city_name,
-            prefecture=prefecture or "兵庫県",
+            prefecture=prefecture,
             rental_market_data=rental_market_data,
         )
 
@@ -320,14 +320,15 @@ async def _fetch_mlit_area_stats(
     try:
         from app.connectors.mlit_transaction import (
             MLITTransactionConnector,
-            city_name_to_code,
-            prefecture_name_to_code,
             station_stats_to_area_data,
         )
 
         # Determine prefecture and city from available data
         pref_code, city_code = _resolve_location_codes(
-            station_name, address_text
+            station_name,
+            address_text,
+            hint_prefecture=result.get("hint_prefecture", ""),
+            hint_city=result.get("hint_city", ""),
         )
         if not pref_code:
             logger.info("MLIT: Could not determine prefecture code")
@@ -366,15 +367,26 @@ async def _fetch_mlit_area_stats(
 
 
 def _resolve_location_codes(
-    station_name: str, address_text: str,
+    station_name: str,
+    address_text: str,
+    hint_prefecture: str = "",
+    hint_city: str = "",
 ) -> tuple[str, str]:
     """Resolve prefecture code and city code from station/address.
+
+    Strategy:
+    1. Use explicit hints (from frontend or search params) first
+    2. Extract from address text (regex for all 47 prefectures + cities)
+    3. Infer from station name using station→city lookup table
+    4. Return whatever we have (prefecture-only is OK for MLIT API)
 
     Returns (prefecture_code, city_code) tuple.
     """
     import re
 
     from app.connectors.mlit_transaction import (
+        CITY_CODES,
+        PREFECTURE_CODES,
         city_name_to_code,
         prefecture_name_to_code,
     )
@@ -382,31 +394,166 @@ def _resolve_location_codes(
     pref_code = ""
     city_code = ""
 
-    # Try extracting from address text
+    # --- 1. Explicit hints ---
+    if hint_prefecture:
+        pref_code = prefecture_name_to_code(hint_prefecture)
+    if hint_city:
+        city_code = city_name_to_code(hint_city)
+
+    # --- 2. Extract from address text ---
     if address_text:
-        # Prefecture
-        m = re.search(
-            r"(東京都|北海道|(?:大阪|京都)府|.{2,3}県)", address_text
-        )
-        if m:
-            pref_code = prefecture_name_to_code(m.group(1))
+        if not pref_code:
+            m = re.search(
+                r"(東京都|北海道|(?:大阪|京都)府|.{2,3}県)", address_text
+            )
+            if m:
+                pref_code = prefecture_name_to_code(m.group(1))
 
-        # City
-        m2 = re.search(r"(.{2,4}[市区町村])", address_text)
-        if m2:
-            city_code = city_name_to_code(m2.group(1))
+        if not city_code:
+            # Try "政令市+区" pattern first (e.g. "横浜市中区", "名古屋市中区")
+            m_ward = re.search(
+                r"(.{2,4}市)(.{1,3}区)", address_text
+            )
+            if m_ward:
+                combined = m_ward.group(1).replace("市", "") + "市" + m_ward.group(2)
+                city_code = city_name_to_code(combined)
+                if not city_code:
+                    # Try just the city part
+                    city_code = city_name_to_code(m_ward.group(1))
 
-    # Default to 兵庫県尼崎市 for known Kansai stations
-    if not pref_code:
-        kansai_stations = {
-            "塚口", "武庫之荘", "立花", "尼崎", "園田",
-            "伊丹", "西宮", "芦屋", "甲子園", "鳴尾",
-        }
-        if station_name in kansai_stations or any(
-            s in station_name for s in kansai_stations
-        ):
-            pref_code = "28"  # 兵庫県
             if not city_code:
-                city_code = "28202"  # 尼崎市 (default for Tsukaguchi area)
+                # Try "XX区" alone (for Tokyo 23 wards)
+                m_ku = re.search(r"([^\s市]{2,4}区)", address_text)
+                if m_ku:
+                    city_code = city_name_to_code(m_ku.group(1))
+
+            if not city_code:
+                # General city/town/village
+                m_city = re.search(r"(.{2,4}[市町村])", address_text)
+                if m_city:
+                    city_code = city_name_to_code(m_city.group(1))
+
+    # --- 3. Infer from station name ---
+    if not pref_code and station_name:
+        inferred = _infer_location_from_station(station_name)
+        if inferred:
+            pref_code = inferred[0]
+            if not city_code:
+                city_code = inferred[1]
 
     return pref_code, city_code
+
+
+# Major station → (prefecture_code, city_code) lookup
+# Covers all major metro areas plus key stations
+_STATION_LOCATION_MAP: dict[str, tuple[str, str]] = {
+    # 関西 (兵庫)
+    "塚口": ("28", "28202"), "武庫之荘": ("28", "28202"),
+    "立花": ("28", "28202"), "尼崎": ("28", "28202"),
+    "園田": ("28", "28202"),
+    "伊丹": ("28", "28207"), "西宮": ("28", "28204"),
+    "芦屋": ("28", "28206"), "甲子園": ("28", "28204"),
+    "鳴尾": ("28", "28204"), "宝塚": ("28", "28214"),
+    "川西": ("28", "28217"), "三田": ("28", "28219"),
+    "三宮": ("28", "28110"), "元町": ("28", "28110"),
+    "神戸": ("28", "28110"), "住吉": ("28", "28101"),
+    "岡本": ("28", "28101"), "御影": ("28", "28101"),
+    "六甲道": ("28", "28102"), "灘": ("28", "28102"),
+    "明石": ("28", "28203"), "姫路": ("28", "28201"),
+    "加古川": ("28", "28210"),
+    # 関西 (大阪)
+    "梅田": ("27", "27127"), "大阪": ("27", "27127"),
+    "難波": ("27", "27111"), "なんば": ("27", "27111"),
+    "天王寺": ("27", "27109"), "新大阪": ("27", "27123"),
+    "心斎橋": ("27", "27128"), "本町": ("27", "27128"),
+    "淀屋橋": ("27", "27128"), "天満橋": ("27", "27128"),
+    "京橋": ("27", "27118"), "鶴橋": ("27", "27115"),
+    "豊中": ("27", "27203"), "吹田": ("27", "27205"),
+    "高槻": ("27", "27207"), "枚方": ("27", "27210"),
+    "茨木": ("27", "27211"), "堺": ("27", "27141"),
+    "東大阪": ("27", "27227"),
+    # 関西 (京都)
+    "京都": ("26", "26106"), "四条": ("26", "26104"),
+    "烏丸": ("26", "26104"), "河原町": ("26", "26104"),
+    # 関西 (奈良)
+    "奈良": ("29", "29201"),
+    # 首都圏 (東京)
+    "東京": ("13", "13102"), "新宿": ("13", "13104"),
+    "渋谷": ("13", "13113"), "池袋": ("13", "13116"),
+    "品川": ("13", "13109"), "目黒": ("13", "13110"),
+    "恵比寿": ("13", "13113"), "中目黒": ("13", "13110"),
+    "自由が丘": ("13", "13110"), "三軒茶屋": ("13", "13112"),
+    "二子玉川": ("13", "13112"), "下北沢": ("13", "13112"),
+    "吉祥寺": ("13", "13203"), "中野": ("13", "13114"),
+    "荻窪": ("13", "13115"), "赤羽": ("13", "13117"),
+    "上野": ("13", "13106"), "秋葉原": ("13", "13101"),
+    "六本木": ("13", "13103"), "表参道": ("13", "13103"),
+    "銀座": ("13", "13102"), "八王子": ("13", "13201"),
+    "立川": ("13", "13202"), "町田": ("13", "13209"),
+    "府中": ("13", "13206"), "調布": ("13", "13208"),
+    "国分寺": ("13", "13214"), "三鷹": ("13", "13204"),
+    "武蔵小金井": ("13", "13210"),
+    # 首都圏 (神奈川)
+    "横浜": ("14", "14104"), "川崎": ("14", "14131"),
+    "武蔵小杉": ("14", "14133"), "溝の口": ("14", "14134"),
+    "たまプラーザ": ("14", "14117"), "藤沢": ("14", "14205"),
+    "鎌倉": ("14", "14204"), "横須賀": ("14", "14201"),
+    "新横浜": ("14", "14109"), "日吉": ("14", "14109"),
+    "センター北": ("14", "14118"), "センター南": ("14", "14118"),
+    # 首都圏 (埼玉)
+    "大宮": ("11", "11103"), "浦和": ("11", "11107"),
+    "川口": ("11", "11203"), "川越": ("11", "11201"),
+    "所沢": ("11", "11208"),
+    # 首都圏 (千葉)
+    "千葉": ("12", "12101"), "船橋": ("12", "12204"),
+    "市川": ("12", "12203"), "松戸": ("12", "12207"),
+    "柏": ("12", "12217"), "浦安": ("12", "12227"),
+    # 中部
+    "名古屋": ("23", "23106"), "栄": ("23", "23106"),
+    "金山": ("23", "23109"), "豊田": ("23", "23211"),
+    "静岡": ("22", "22101"), "浜松": ("22", "22131"),
+    "岐阜": ("21", "21201"), "津": ("24", "24201"),
+    "金沢": ("17", "17201"), "新潟": ("15", "15101"),
+    "富山": ("16", "16201"), "長野": ("20", "20201"),
+    "甲府": ("19", "19201"),
+    # 中国
+    "広島": ("34", "34101"), "岡山": ("33", "33101"),
+    "倉敷": ("33", "33202"), "福山": ("34", "34207"),
+    "松江": ("32", "32201"), "鳥取": ("31", "31201"),
+    "下関": ("35", "35201"), "山口": ("35", "35203"),
+    # 四国
+    "高松": ("37", "37201"), "松山": ("38", "38201"),
+    "徳島": ("36", "36201"), "高知": ("39", "39201"),
+    # 九州
+    "博多": ("40", "40132"), "天神": ("40", "40133"),
+    "福岡": ("40", "40133"), "北九州": ("40", "40106"),
+    "小倉": ("40", "40106"), "久留米": ("40", "40203"),
+    "熊本": ("43", "43101"), "大分": ("44", "44201"),
+    "長崎": ("42", "42201"), "佐賀": ("41", "41201"),
+    "鹿児島": ("46", "46201"), "宮崎": ("45", "45201"),
+    "那覇": ("47", "47201"),
+    # 北海道・東北
+    "札幌": ("01", "01101"), "旭川": ("01", "01204"),
+    "函館": ("01", "01202"),
+    "仙台": ("04", "04101"), "盛岡": ("03", "03201"),
+    "青森": ("02", "02201"), "秋田": ("05", "05201"),
+    "山形": ("06", "06201"), "福島": ("07", "07201"),
+    "郡山": ("07", "07203"),
+}
+
+
+def _infer_location_from_station(station_name: str) -> tuple[str, str] | None:
+    """Infer prefecture and city code from station name.
+
+    Supports exact match and partial/fuzzy matching.
+    """
+    # Exact match
+    if station_name in _STATION_LOCATION_MAP:
+        return _STATION_LOCATION_MAP[station_name]
+
+    # Partial match: station_name contains or is contained in a known station
+    for known, codes in _STATION_LOCATION_MAP.items():
+        if known in station_name or station_name in known:
+            return codes
+
+    return None

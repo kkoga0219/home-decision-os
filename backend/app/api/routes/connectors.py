@@ -238,18 +238,35 @@ async def area_search(body: AreaSearchRequest):
                 prefecture_name_to_code as _pnc,
                 city_name_to_code as _cnc,
             )
-            pref_code = _pnc(body.prefecture) or "28"
+            pref_code = _pnc(body.prefecture)
             city_code = _cnc(body.city_name) if body.city_name else ""
-            ml_dataset = await fetch_ml_dataset(
-                settings.mlit_api_key, pref_code, city_code,
-                station_name=body.station_name,
-            )
+            # Infer from station name if not resolved
+            if not pref_code and body.station_name:
+                from app.connectors.enrichment import (
+                    _infer_location_from_station,
+                )
+                inferred = _infer_location_from_station(body.station_name)
+                if inferred:
+                    pref_code = inferred[0]
+                    if not city_code:
+                        city_code = inferred[1]
+            if not pref_code:
+                pref_code = ""  # Skip ML if we can't determine location
+            if pref_code:
+                ml_dataset = await fetch_ml_dataset(
+                    settings.mlit_api_key, pref_code, city_code,
+                    station_name=body.station_name,
+                )
             if ml_dataset and ml_dataset.n_samples >= 15:
                 hedonic_model = train_hedonic_model(ml_dataset)
                 pref_yield = {
-                    "兵庫県": 0.055, "大阪府": 0.050,
-                    "東京都": 0.042, "京都府": 0.050,
-                }.get(body.prefecture, 0.055)
+                    "東京都": 0.042, "神奈川県": 0.048,
+                    "大阪府": 0.050, "京都府": 0.050,
+                    "愛知県": 0.052, "兵庫県": 0.055,
+                    "千葉県": 0.055, "埼玉県": 0.055,
+                    "福岡県": 0.055, "北海道": 0.060,
+                    "宮城県": 0.058, "広島県": 0.056,
+                }.get(body.prefecture, 0.058)
                 ml_cap_rates = calibrate_cap_rates(
                     ml_dataset,
                     rental_market_data=rental_market_data,
@@ -720,7 +737,7 @@ class ValuationRequest(BaseModel):
     layout: str = Field(default="", description="間取り (3LDK等)")
     station_name: str = Field(default="", description="最寄駅")
     city_name: str = Field(default="", description="市区町村")
-    prefecture: str = Field(default="兵庫県", description="都道府県")
+    prefecture: str = Field(default="", description="都道府県")
 
 
 @router.post("/valuation")

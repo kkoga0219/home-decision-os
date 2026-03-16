@@ -11,8 +11,12 @@ import {
   getExitScore, calculateExitScore,
   fetchRentEstimate,
   simulateCashflowForProperty,
+  runValuation,
 } from "@/lib/api";
-import type { CashflowSimulationResult, ExitScenarioData } from "@/lib/api";
+import type {
+  CashflowSimulationResult, ExitScenarioData,
+  ValuationResult, CompTransaction,
+} from "@/lib/api";
 import { yen, yenCompact, pct, signedYen } from "@/lib/format";
 import KpiCard from "@/components/KpiCard";
 import ScoreBar from "@/components/ScoreBar";
@@ -58,6 +62,10 @@ export default function PropertyDetailPage() {
   const [rentalForm, setRentalForm] = useState<RentalScenarioCreate>(DEFAULT_RENTAL);
   const [rentEstimate, setRentEstimate] = useState<RentEstimateResponse | null>(null);
 
+  // ML Valuation
+  const [valuation, setValuation] = useState<ValuationResult | null>(null);
+  const [valLoading, setValLoading] = useState(false);
+
   // Cashflow simulation
   const [cfResult, setCfResult] = useState<CashflowSimulationResult | null>(null);
   const [cfLoading, setCfLoading] = useState(false);
@@ -81,6 +89,32 @@ export default function PropertyDetailPage() {
       console.error("CF simulation failed:", err);
     } finally {
       setCfLoading(false);
+    }
+  }
+
+  async function handleRunValuation() {
+    if (!property) return;
+    setValLoading(true);
+    try {
+      const prefMatch = property.address_text?.match(
+        /(東京都|大阪府|京都府|兵庫県|神奈川県|愛知県|福岡県|北海道|.{2,3}県)/
+      );
+      const builtYear = property.built_year;
+      const ageYears = builtYear ? new Date().getFullYear() - builtYear : undefined;
+      const res = await runValuation({
+        price_jpy: property.price_jpy,
+        floor_area_sqm: property.floor_area_sqm ?? undefined,
+        age_years: ageYears,
+        walking_minutes: property.walking_minutes ?? undefined,
+        layout: property.layout ?? undefined,
+        station_name: property.station_name ?? undefined,
+        prefecture: prefMatch?.[1] ?? "",
+      });
+      setValuation(res);
+    } catch (err: any) {
+      console.error("Valuation failed:", err);
+    } finally {
+      setValLoading(false);
     }
   }
 
@@ -198,6 +232,197 @@ export default function PropertyDetailPage() {
           <span className="font-medium">メモ:</span> {p.memo}
         </div>
       )}
+
+      {/* ── ML Valuation Panel ── */}
+      <section>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-bold">ML バリュエーション</h2>
+          <button onClick={handleRunValuation} disabled={valLoading} className={btnPrimary}>
+            {valLoading ? "分析中..." : valuation ? "再分析" : "ML分析を実行"}
+          </button>
+        </div>
+
+        {!valuation && !valLoading && (
+          <p className="text-sm text-gray-400">
+            「ML分析を実行」で国交省取引データに基づく機械学習評価を行います
+          </p>
+        )}
+
+        {valuation && (
+          <div className="space-y-4">
+            {/* Dataset info banner */}
+            <div className={`rounded-lg p-3 text-sm ${valuation.mlit_available ? "bg-purple-50 border border-purple-200 text-purple-800" : "bg-gray-50 border border-gray-200 text-gray-600"}`}>
+              {valuation.mlit_available
+                ? `MLIT実取引データ ${valuation.dataset_size}件を使用`
+                : "MLITデータ未取得（ルールベース推定）"}
+              {valuation.errors.length > 0 && (
+                <span className="ml-2 text-xs text-orange-600">
+                  ({valuation.errors.length}件の警告あり)
+                </span>
+              )}
+            </div>
+
+            {/* Hedonic Price Prediction */}
+            {valuation.hedonic && (
+              <div className="bg-white border border-gray-200 rounded-lg p-5">
+                <h3 className="text-sm font-bold text-gray-700 mb-3">ヘドニック価格モデル</h3>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+                  <div>
+                    <span className="text-xs text-gray-500">予測価格</span>
+                    <div className="text-lg font-bold text-purple-700">
+                      {yenCompact(valuation.hedonic.predicted_total_price)}
+                    </div>
+                  </div>
+                  <div>
+                    <span className="text-xs text-gray-500">㎡単価</span>
+                    <div className="font-bold">
+                      {Math.round(valuation.hedonic.predicted_unit_price).toLocaleString()}円/㎡
+                    </div>
+                  </div>
+                  <div>
+                    <span className="text-xs text-gray-500">信頼区間</span>
+                    <div className="text-sm">
+                      {yenCompact(valuation.hedonic.confidence_low)} 〜 {yenCompact(valuation.hedonic.confidence_high)}
+                    </div>
+                  </div>
+                  <div>
+                    <span className="text-xs text-gray-500">乖離率</span>
+                    <div className={`font-bold ${
+                      (valuation.hedonic.deviation_pct ?? 0) < -8 ? "text-green-600"
+                        : (valuation.hedonic.deviation_pct ?? 0) > 8 ? "text-red-600"
+                        : "text-gray-700"
+                    }`}>
+                      {valuation.hedonic.deviation_pct != null
+                        ? `${valuation.hedonic.deviation_pct > 0 ? "+" : ""}${valuation.hedonic.deviation_pct.toFixed(1)}%`
+                        : "-"}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-4 text-xs text-gray-500">
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                    valuation.hedonic.assessment.includes("割安") ? "bg-green-100 text-green-700"
+                      : valuation.hedonic.assessment.includes("割高") ? "bg-red-100 text-red-700"
+                      : "bg-gray-100 text-gray-700"
+                  }`}>
+                    {valuation.hedonic.assessment}
+                  </span>
+                  <span>R²: {valuation.hedonic.model_r2.toFixed(3)}</span>
+                  <span>MAPE: {(valuation.hedonic.model_mape * 100).toFixed(1)}%</span>
+                  <span>{valuation.hedonic.training_samples}件で学習</span>
+                </div>
+              </div>
+            )}
+
+            {/* Comparable Transactions */}
+            {valuation.comps && (
+              <div className="bg-white border border-gray-200 rounded-lg p-5">
+                <h3 className="text-sm font-bold text-gray-700 mb-3">
+                  取引事例比較法（{valuation.comps.n_comps}件）
+                </h3>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+                  <div>
+                    <span className="text-xs text-gray-500">中央値総額</span>
+                    <div className="text-lg font-bold">{yenCompact(valuation.comps.median_total_price)}</div>
+                  </div>
+                  <div>
+                    <span className="text-xs text-gray-500">価格帯</span>
+                    <div className="text-sm">
+                      {yenCompact(valuation.comps.price_range_low)} 〜 {yenCompact(valuation.comps.price_range_high)}
+                    </div>
+                  </div>
+                  <div>
+                    <span className="text-xs text-gray-500">加重平均㎡単価</span>
+                    <div className="font-bold">{valuation.comps.weighted_avg_price.toLocaleString()}円</div>
+                  </div>
+                  <div>
+                    <span className="text-xs text-gray-500">判定</span>
+                    <div className={`font-bold ${
+                      valuation.comps.assessment.includes("割安") ? "text-green-600"
+                        : valuation.comps.assessment.includes("割高") ? "text-red-600"
+                        : "text-gray-700"
+                    }`}>
+                      {valuation.comps.assessment}
+                    </div>
+                  </div>
+                </div>
+                {/* Top comps table */}
+                {valuation.comps.top_comps.length > 0 && (
+                  <CompsTable comps={valuation.comps.top_comps} />
+                )}
+              </div>
+            )}
+
+            {/* Trend + ML Rent + Exit Score row */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Price Trend */}
+              {valuation.trend && (
+                <div className="bg-white border border-gray-200 rounded-lg p-4">
+                  <h3 className="text-sm font-bold text-gray-700 mb-2">価格トレンド</h3>
+                  <div className={`text-2xl font-bold mb-1 ${
+                    valuation.trend.trend_pct_annual > 0 ? "text-green-600" : "text-red-600"
+                  }`}>
+                    {valuation.trend.trend_pct_annual > 0 ? "+" : ""}
+                    {valuation.trend.trend_pct_annual.toFixed(1)}%/年
+                  </div>
+                  <div className="text-xs text-gray-500 space-y-1">
+                    <div>方向: {valuation.trend.trend_direction}</div>
+                    <div>加速度: {valuation.trend.acceleration}</div>
+                    <div>ボラティリティ: {valuation.trend.volatility}</div>
+                    <div>{valuation.trend.n_transactions}件 / {valuation.trend.n_quarters}四半期</div>
+                  </div>
+                </div>
+              )}
+
+              {/* ML Rent */}
+              {valuation.ml_rent && (
+                <div className="bg-white border border-gray-200 rounded-lg p-4">
+                  <h3 className="text-sm font-bold text-gray-700 mb-2">ML賃料推定</h3>
+                  <div className="text-2xl font-bold text-blue-700 mb-1">
+                    {valuation.ml_rent.estimated_rent.toLocaleString()}円/月
+                  </div>
+                  <div className="text-xs text-gray-500 space-y-1">
+                    <div>レンジ: {valuation.ml_rent.low_estimate.toLocaleString()} 〜 {valuation.ml_rent.high_estimate.toLocaleString()}</div>
+                    <div>表面利回り: {(valuation.ml_rent.gross_yield * 100).toFixed(2)}%</div>
+                    <div>Cap Rate: {(valuation.ml_rent.cap_rate * 100).toFixed(2)}%</div>
+                    <div>信頼度: {valuation.ml_rent.confidence}</div>
+                  </div>
+                </div>
+              )}
+
+              {/* ML Exit Score */}
+              {valuation.ml_exit_score && (
+                <div className="bg-white border border-gray-200 rounded-lg p-4">
+                  <h3 className="text-sm font-bold text-gray-700 mb-2">ML出口スコア</h3>
+                  <div className={`text-3xl font-bold mb-1 ${
+                    valuation.ml_exit_score.total_score >= 70 ? "text-green-600"
+                      : valuation.ml_exit_score.total_score >= 50 ? "text-yellow-600"
+                      : "text-red-600"
+                  }`}>
+                    {valuation.ml_exit_score.total_score}
+                    <span className="text-sm text-gray-400 font-normal ml-1">/100</span>
+                  </div>
+                  <div className="text-xs text-gray-500 space-y-1">
+                    <div>{valuation.ml_exit_score.assessment}</div>
+                    <div>流動性: {valuation.ml_exit_score.liquidity.detail}</div>
+                    <div>価格維持: {valuation.ml_exit_score.price_retention.detail}</div>
+                    <div>勢い: {valuation.ml_exit_score.momentum.detail}</div>
+                    <div>需要: {valuation.ml_exit_score.demand_match.detail}</div>
+                    <div className="text-purple-600">{valuation.ml_exit_score.n_transactions}件の実取引データ</div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Warnings */}
+            {valuation.errors.length > 0 && (
+              <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 text-xs text-orange-700">
+                <span className="font-medium">警告:</span>
+                {valuation.errors.map((e, i) => <div key={i}>・{e}</div>)}
+              </div>
+            )}
+          </div>
+        )}
+      </section>
 
       {/* ── Loan Scenarios ── */}
       <section>
@@ -545,6 +770,54 @@ export default function PropertyDetailPage() {
   );
 }
 
+
+/* ── Comparable Transactions Table ── */
+function CompsTable({ comps }: { comps: CompTransaction[] }) {
+  const [open, setOpen] = useState(false);
+  const shown = open ? comps : comps.slice(0, 3);
+  return (
+    <div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b text-gray-500">
+              <th className="px-2 py-1 text-left">駅</th>
+              <th className="px-2 py-1 text-right">取引価格</th>
+              <th className="px-2 py-1 text-right">㎡単価</th>
+              <th className="px-2 py-1 text-right">面積</th>
+              <th className="px-2 py-1 text-right">築年</th>
+              <th className="px-2 py-1 text-left">間取り</th>
+              <th className="px-2 py-1 text-right">類似度</th>
+              <th className="px-2 py-1 text-left">時期</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map((c, i) => (
+              <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
+                <td className="px-2 py-1">{c.station_name}</td>
+                <td className="px-2 py-1 text-right">{yenCompact(c.trade_price)}</td>
+                <td className="px-2 py-1 text-right">{c.unit_price.toLocaleString()}</td>
+                <td className="px-2 py-1 text-right">{c.floor_area}㎡</td>
+                <td className="px-2 py-1 text-right">{Math.round(c.age_years)}年</td>
+                <td className="px-2 py-1">{c.layout}</td>
+                <td className="px-2 py-1 text-right">{(c.similarity * 100).toFixed(0)}%</td>
+                <td className="px-2 py-1">{c.trade_period}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {comps.length > 3 && (
+        <button
+          onClick={() => setOpen(!open)}
+          className="text-xs text-primary-600 hover:underline mt-1"
+        >
+          {open ? "閉じる" : `他${comps.length - 3}件を表示`}
+        </button>
+      )}
+    </div>
+  );
+}
 
 /* ── Collapsible Annual Cashflow Table ── */
 function CashflowDetailTable({

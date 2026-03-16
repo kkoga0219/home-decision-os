@@ -598,6 +598,22 @@ export default function AreaSearchPage() {
       {/* Area stats summary */}
       {result?.area_stats && <AreaStatsBar stats={result.area_stats} />}
 
+      {/* ML Model info banner */}
+      {result?.ml_model_info?.hedonic_available && (
+        <div className="bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-200 rounded-lg p-3 mb-4 flex items-center gap-3">
+          <span className="bg-purple-600 text-white text-[10px] font-bold px-2 py-0.5 rounded">ML</span>
+          <span className="text-xs text-purple-800">
+            MLIT実取引データ {result.ml_model_info.dataset_size}件で学習済み
+            {result.ml_model_info.hedonic_r2 != null && (
+              <span className="ml-2 text-purple-600">
+                (R²={result.ml_model_info.hedonic_r2.toFixed(2)}, MAPE={((result.ml_model_info.hedonic_mape ?? 0) * 100).toFixed(1)}%)
+              </span>
+            )}
+          </span>
+          <span className="text-[10px] text-purple-500 ml-auto">適正価格・賃料はMLモデルで算出</span>
+        </div>
+      )}
+
       {/* Results */}
       {result && (
         <div className="mb-4">
@@ -766,12 +782,12 @@ function ListingRow({
             ) : null}
             {listing.vs_market && (
               <span className={`px-2 py-0.5 rounded text-xs font-bold shrink-0 ${
-                listing.vs_market === "割安" ? "bg-green-100 text-green-700" :
-                listing.vs_market === "相場並み" ? "bg-blue-100 text-blue-700" :
-                listing.vs_market === "やや割高" ? "bg-amber-100 text-amber-700" :
+                listing.vs_market.includes("割安") ? "bg-green-100 text-green-700" :
+                listing.vs_market.includes("適正") || listing.vs_market === "相場並み" ? "bg-blue-100 text-blue-700" :
+                listing.vs_market.includes("割高") ? "bg-amber-100 text-amber-700" :
                 "bg-red-100 text-red-700"
               }`}>
-                {listing.vs_market}
+                {listing.ml_fair_price ? "ML:" : ""}{listing.vs_market}
                 {listing.vs_market_pct != null && ` ${listing.vs_market_pct > 0 ? "+" : ""}${listing.vs_market_pct}%`}
               </span>
             )}
@@ -810,11 +826,28 @@ function ListingRow({
           )}
         </div>
 
-        {/* Rent & yield */}
-        <div className="text-right shrink-0">
+        {/* Rent & yield + ML fair price */}
+        <div className="text-right shrink-0 space-y-1">
+          {listing.ml_fair_price && listing.price_jpy && (
+            <div>
+              <span className="text-[10px] text-purple-500">ML適正価格</span>
+              <p className="text-sm font-bold text-purple-700">{yenCompact(listing.ml_fair_price)}</p>
+            </div>
+          )}
           {listing.estimated_rent && (
             <div>
-              <span className="text-xs text-gray-400">推定賃料</span>
+              <span className="text-[10px] text-gray-400">
+                推定賃料
+                {listing.rent_confidence === "high" && (
+                  <span className="ml-1 text-green-500">&#9679;</span>
+                )}
+                {listing.rent_confidence === "medium" && (
+                  <span className="ml-1 text-yellow-500">&#9679;</span>
+                )}
+                {listing.rent_confidence === "low" && (
+                  <span className="ml-1 text-gray-300">&#9679;</span>
+                )}
+              </span>
               <p className="text-sm font-bold text-blue-600">{yen(listing.estimated_rent)}<span className="text-xs font-normal">/月</span></p>
             </div>
           )}

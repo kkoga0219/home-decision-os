@@ -166,7 +166,7 @@ async def _enrich_with_market_data(result: dict[str, Any]) -> None:
             result["sources_used"].append("賃料推定エンジン")
             result["rent_estimate"] = rent_result.data
 
-    # --- Step 6: Market comparison ---
+    # --- Step 6: Market comparison (legacy rule-based) ---
     if price and area_result.success:
         avg_70 = area_result.data.get("avg_price_70sqm", 0)
         if avg_70 > 0:
@@ -196,6 +196,115 @@ async def _enrich_with_market_data(result: dict[str, Any]) -> None:
             result["market_comparison"]["quarterly_prices"] = (
                 mlit_area_data["quarterly_prices"]
             )
+
+    # --- Step 7: ML Valuation Engine (hedonic, comps, trend, rent, exit) ---
+    if price and price > 0:
+        await _enrich_with_ml_valuation(
+            result,
+            price_jpy=price,
+            station_name=station_name,
+            prefecture=area_result.data.get("prefecture", "") if area_result.success else "",
+            rental_market_data=rental_market_data,
+        )
+
+
+async def _enrich_with_ml_valuation(
+    result: dict[str, Any],
+    price_jpy: int,
+    station_name: str,
+    prefecture: str,
+    rental_market_data: dict | None = None,
+) -> None:
+    """Run ML valuation engine and merge results into enrichment output.
+
+    Adds hedonic pricing, comparable transaction analysis, price trend
+    forecasting, ML-calibrated rent estimation, and data-driven exit score.
+    Non-fatal: errors are logged and enrichment continues without ML data.
+    """
+    try:
+        from app.ml.valuation_engine import run_valuation
+
+        floor_area = result.get("hint_floor_area_sqm") or 65.0
+        built_year = result.get("hint_built_year")
+        age_years = (2026 - built_year) if built_year else 15.0
+        walking_minutes = result.get("hint_walking_minutes") or 10.0
+        layout = result.get("hint_layout", "")
+
+        # Infer city name from address text
+        city_name = ""
+        address_text = result.get("hint_address_text", "")
+        if address_text:
+            import re
+            m = re.search(r"(.{2,4}[市区町村])", address_text)
+            if m:
+                city_name = m.group(1)
+
+        report = await run_valuation(
+            price_jpy=price_jpy,
+            floor_area=float(floor_area),
+            age_years=float(age_years),
+            walking_minutes=float(walking_minutes),
+            layout=layout,
+            station_name=station_name,
+            city_name=city_name,
+            prefecture=prefecture or "兵庫県",
+            rental_market_data=rental_market_data,
+        )
+
+        ml_data = report.to_dict()
+        result["ml_valuation"] = ml_data
+
+        if report.mlit_available:
+            result["sources_used"].append(
+                f"ML評価エンジン (MLIT {report.dataset_size}件)"
+            )
+
+        # Override market comparison with hedonic model if available
+        if report.hedonic:
+            result["market_comparison_ml"] = {
+                "method": "hedonic_model",
+                "predicted_total_price": report.hedonic.predicted_total_price,
+                "predicted_unit_price": report.hedonic.predicted_unit_price,
+                "confidence_low": report.hedonic.confidence_low,
+                "confidence_high": report.hedonic.confidence_high,
+                "deviation_pct": report.hedonic.deviation_pct,
+                "assessment": report.hedonic.assessment,
+                "model_r2": report.hedonic.model_r2,
+                "model_mape": report.hedonic.model_mape,
+            }
+
+        # Override rent estimate with ML-calibrated version if available
+        if report.rent:
+            result["rent_estimate_ml"] = {
+                "estimated_rent": report.rent.estimated_rent,
+                "low_estimate": report.rent.low_estimate,
+                "high_estimate": report.rent.high_estimate,
+                "gross_yield": report.rent.gross_yield,
+                "confidence": report.rent.confidence,
+                "method": report.rent.method,
+                "cap_rate": report.rent.cap_rate_used,
+            }
+
+        # Add ML exit score (replaces or supplements rule-based)
+        if report.exit_score:
+            result["exit_score_ml"] = {
+                "total_score": report.exit_score.total_score,
+                "assessment": report.exit_score.assessment,
+                "liquidity": report.exit_score.liquidity_detail,
+                "price_retention": report.exit_score.price_retention_detail,
+                "momentum": report.exit_score.momentum_detail,
+                "demand_match": report.exit_score.demand_match_detail,
+                "data_quality": report.exit_score.data_quality,
+            }
+
+        if report.errors:
+            result["ml_warnings"] = report.errors
+
+    except Exception as e:
+        logger.warning("ML valuation error (non-fatal): %s", e)
+        result.setdefault("errors", []).append(
+            f"ML評価エンジンエラー: {e!s}"
+        )
 
 
 async def _fetch_mlit_area_stats(

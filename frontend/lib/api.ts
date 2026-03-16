@@ -146,10 +146,23 @@ export interface AreaSearchListing {
   floor?: string;
   estimated_rent?: number;
   gross_yield?: number;
+  rent_confidence?: string;
+  rent_method?: string;
   vs_market_pct?: number;
   vs_market?: string;
+  ml_fair_price?: number;
+  ml_deviation_pct?: number;
+  ml_assessment?: string;
   parse_method?: string;
   source?: string;
+}
+
+export interface MLModelInfo {
+  hedonic_available: boolean;
+  hedonic_r2: number | null;
+  hedonic_mape: number | null;
+  dataset_size: number;
+  rent_calibration: string | null;
 }
 
 export interface AreaSearchResult {
@@ -159,7 +172,114 @@ export interface AreaSearchResult {
   total_found: number;
   listings: AreaSearchListing[];
   area_stats: import("./types").AreaStats | null;
+  ml_model_info?: MLModelInfo;
   errors: string[];
+}
+
+// --- ML Valuation ---
+
+export interface ValuationParams {
+  price_jpy: number;
+  floor_area_sqm?: number;
+  age_years?: number;
+  walking_minutes?: number;
+  layout?: string;
+  station_name?: string;
+  city_name?: string;
+  prefecture?: string;
+}
+
+export interface CompTransaction {
+  trade_price: number;
+  unit_price: number;
+  floor_area: number;
+  age_years: number;
+  walking_minutes: number;
+  layout: string;
+  station_name: string;
+  district: string;
+  trade_period: string;
+  similarity: number;
+}
+
+export interface ValuationResult {
+  mlit_available: boolean;
+  dataset_size: number;
+  errors: string[];
+  hedonic?: {
+    predicted_unit_price: number;
+    predicted_total_price: number;
+    confidence_low: number;
+    confidence_high: number;
+    deviation_pct: number | null;
+    assessment: string;
+    model_r2: number;
+    model_mape: number;
+    training_samples: number;
+    top_features: { feature: string; importance: number }[];
+    method: string;
+  };
+  comps?: {
+    n_comps: number;
+    median_unit_price: number;
+    p25_unit_price: number;
+    p75_unit_price: number;
+    weighted_avg_price: number;
+    median_total_price: number;
+    price_range_low: number;
+    price_range_high: number;
+    deviation_pct: number | null;
+    assessment: string;
+    search_criteria: string;
+    top_comps: CompTransaction[];
+  };
+  trend?: {
+    current_unit_price: number;
+    trend_direction: string;
+    trend_pct_annual: number;
+    acceleration: string;
+    volatility: string;
+    n_quarters: number;
+    n_transactions: number;
+    confidence_note: string;
+    forecasts: {
+      period: string;
+      predicted: number;
+      low: number;
+      high: number;
+    }[];
+    history: {
+      period: string;
+      avg_unit_price: number;
+      median_unit_price: number;
+      count: number;
+      trend_line: number;
+    }[];
+  };
+  ml_rent?: {
+    estimated_rent: number;
+    low_estimate: number;
+    high_estimate: number;
+    gross_yield: number;
+    confidence: string;
+    method: string;
+    cap_rate: number;
+    adjustments: Record<string, number>;
+  };
+  ml_exit_score?: {
+    total_score: number;
+    assessment: string;
+    liquidity: { score: number; detail: string };
+    price_retention: { score: number; detail: string };
+    momentum: { score: number; detail: string };
+    demand_match: { score: number; detail: string };
+    station_score: number;
+    size_score: number;
+    layout_score: number;
+    n_transactions: number;
+    data_quality: string;
+    comparable_count: number;
+  };
 }
 
 export interface AreaSearchParams {
@@ -188,6 +308,15 @@ export async function searchArea(params: AreaSearchParams): Promise<AreaSearchRe
     }
   }
   return request("/connectors/area-search", { method: "POST", body: JSON.stringify(clean) });
+}
+
+export async function runValuation(
+  params: ValuationParams,
+): Promise<ValuationResult> {
+  return request("/connectors/valuation", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
 }
 
 // --- Cashflow Simulation ---

@@ -13,6 +13,7 @@ HTML structure (confirmed 2026-03):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Any
@@ -27,10 +28,24 @@ logger = logging.getLogger(__name__)
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    ),
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;q=0.9,"
+        "image/avif,image/webp,image/apng,*/*;q=0.8"
     ),
     "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Cache-Control": "no-cache",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
 }
+
+_MAX_RETRIES = 2
+_RETRY_DELAY = 2.0  # seconds
 
 # Prefecture slug mapping for HOME'S URLs
 _PREF_SLUGS: dict[str, str] = {
@@ -100,7 +115,9 @@ class HomesSearchConnector(BaseConnector):
 
         try:
             async with httpx.AsyncClient(
-                timeout=20, follow_redirects=True,
+                timeout=25,
+                follow_redirects=True,
+                http2=False,
             ) as client:
                 for page in range(1, max_pages + 1):
                     if page == 1:
@@ -109,20 +126,17 @@ class HomesSearchConnector(BaseConnector):
                         sep = "&" if "?" in base_url else "?"
                         url = f"{base_url}{sep}page={page}"
 
-                    logger.info(
-                        "Fetching HOME'S page %d: %s", page, url,
+                    # Add per-page delay to avoid rate-limiting
+                    if page > 1:
+                        await asyncio.sleep(1.0)
+
+                    html = await self._fetch_page_with_retry(
+                        client, url, page, errors,
                     )
-                    resp = await client.get(
-                        url, headers=HEADERS,
-                    )
-                    if resp.status_code != 200:
-                        errors.append(
-                            f"HOME'S page {page}: "
-                            f"HTTP {resp.status_code}"
-                        )
+                    if html is None:
                         break
 
-                    listings = _parse_homes_page(resp.text)
+                    listings = _parse_homes_page(html)
                     if not listings:
                         break
                     all_listings.extend(listings)
@@ -145,6 +159,57 @@ class HomesSearchConnector(BaseConnector):
             },
             errors=errors,
         )
+
+    @staticmethod
+    async def _fetch_page_with_retry(
+        client: httpx.AsyncClient,
+        url: str,
+        page: int,
+        errors: list[str],
+    ) -> str | None:
+        """Fetch a single page with retry on 202/429."""
+        for attempt in range(_MAX_RETRIES):
+            logger.info(
+                "Fetching HOME'S page %d (attempt %d): %s",
+                page, attempt + 1, url,
+            )
+            headers = {**HEADERS, "Referer": "https://www.homes.co.jp/"}
+            resp = await client.get(url, headers=headers)
+
+            if resp.status_code == 200:
+                return resp.text
+
+            # 202 = accepted but processing (bot challenge / loading page)
+            # 429 = rate limited → retry after delay
+            if resp.status_code in (202, 429, 503):
+                logger.warning(
+                    "HOME'S page %d: HTTP %d, retrying in %.1fs",
+                    page, resp.status_code, _RETRY_DELAY,
+                )
+                await asyncio.sleep(_RETRY_DELAY)
+                continue
+
+            # 3xx after follow_redirects=True means chain exhausted
+            # 4xx/5xx = hard error, don't retry
+            errors.append(
+                f"HOME'S page {page}: HTTP {resp.status_code}"
+            )
+            return None
+
+        # All retries exhausted — try to parse the last response anyway
+        # (some 202 responses still contain usable HTML)
+        if resp.status_code in (200, 202):
+            logger.info(
+                "HOME'S page %d: using response despite HTTP %d",
+                page, resp.status_code,
+            )
+            return resp.text
+
+        errors.append(
+            f"HOME'S page {page}: HTTP {resp.status_code} after "
+            f"{_MAX_RETRIES} retries"
+        )
+        return None
 
     @staticmethod
     def _resolve_url(

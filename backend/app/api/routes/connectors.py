@@ -8,8 +8,12 @@ Exposes the data connectors as REST endpoints for:
 - Rent estimation
 """
 
+import logging
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 from app.config import settings
 from app.connectors.area_stats import AreaStatsConnector

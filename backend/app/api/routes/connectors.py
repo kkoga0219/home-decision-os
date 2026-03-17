@@ -132,14 +132,13 @@ async def area_search(body: AreaSearchRequest):
 
     async def _fetch_suumo():
         c = SuumoSearchConnector()
+        # Note: filter params are NOT passed to SUUMO URL construction.
+        # Filtering is handled post-fetch by _apply_filters() and also
+        # client-side. This avoids SUUMO returning 0 results when filter
+        # query params produce an unrecognized URL format.
         return await c.fetch(
             **search_kwargs,
             search_url=body.search_url,
-            price_min=body.price_min,
-            price_max=body.price_max,
-            area_min=body.area_min,
-            walking_max=body.walking_max,
-            age_max=body.age_max,
             stations=body.stations,
         )
 
@@ -211,6 +210,7 @@ async def area_search(body: AreaSearchRequest):
         area_result = None
 
     # --- 3. Post-filter ---
+    total_before_filter = len(all_raw_listings)
     listings = _apply_filters(
         all_raw_listings,
         price_min=body.price_min,
@@ -221,6 +221,9 @@ async def area_search(body: AreaSearchRequest):
         walking_max=body.walking_max,
         age_max=body.age_max,
         current_year=datetime.date.today().year,
+    )
+    logger.info(
+        "Post-filter: %d → %d listings", total_before_filter, len(listings),
     )
 
     # --- 4. ML Valuation (MLIT-based, if API key available) ---
@@ -414,6 +417,7 @@ async def area_search(body: AreaSearchRequest):
         "search_url": primary_url,
         "search_urls": search_urls,
         "total_found": len(enriched_listings),
+        "total_before_filter": total_before_filter,
         "listings": enriched_listings,
         "area_stats": (
             area_result.data

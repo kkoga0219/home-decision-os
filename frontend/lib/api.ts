@@ -170,6 +170,7 @@ export interface AreaSearchResult {
   search_url: string;
   search_urls?: Record<string, string>;
   total_found: number;
+  total_before_filter?: number;
   listings: AreaSearchListing[];
   area_stats: import("./types").AreaStats | null;
   ml_model_info?: MLModelInfo;

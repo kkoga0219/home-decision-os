@@ -174,6 +174,39 @@ const INITIAL_FILTERS: Filters = {
 /* Page component                                                      */
 /* ------------------------------------------------------------------ */
 
+// --------------- Client-side filter utility ---------------
+function applyLocalFilters(
+  listings: AreaSearchListing[],
+  f: Filters,
+): AreaSearchListing[] {
+  const currentYear = new Date().getFullYear();
+  return listings.filter((ls) => {
+    const price = ls.price_jpy;
+    if (f.priceMin && price != null && price < parseInt(f.priceMin) * 10_000)
+      return false;
+    if (f.priceMax && price != null && price > parseInt(f.priceMax) * 10_000)
+      return false;
+
+    const area = ls.floor_area_sqm;
+    if (f.areaMin && area != null && area < parseFloat(f.areaMin)) return false;
+    if (f.areaMax && area != null && area > parseFloat(f.areaMax)) return false;
+
+    if (f.layouts.length > 0) {
+      const layout = ls.layout || "";
+      if (layout && !f.layouts.includes(layout)) return false;
+    }
+
+    const walk = ls.walking_minutes;
+    if (f.walkMax && walk != null && walk > parseInt(f.walkMax)) return false;
+
+    const built = ls.built_year;
+    if (f.ageMax && built != null && currentYear - built > parseInt(f.ageMax))
+      return false;
+
+    return true;
+  });
+}
+
 export default function AreaSearchPage() {
   const router = useRouter();
   const [station, setStation] = useState("");
@@ -181,6 +214,10 @@ export default function AreaSearchPage() {
   const [prefecture, setPrefecture] = useState("兵庫県");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AreaSearchResult | null>(null);
+  // Cache: stores all listings from the last fetch (before client-side filtering)
+  const [cachedAllListings, setCachedAllListings] = useState<AreaSearchListing[]>([]);
+  // Track the search params that produced the cached results
+  const [cachedSearchKey, setCachedSearchKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<string>("price");
   const [registeringUrl, setRegisteringUrl] = useState<string | null>(null);
@@ -221,6 +258,14 @@ export default function AreaSearchPage() {
 
   function resetFilters() {
     setFilters(INITIAL_FILTERS);
+    // Immediately restore all cached listings (unfiltered)
+    if (result && cachedAllListings.length > 0) {
+      setResult({
+        ...result,
+        listings: cachedAllListings,
+        total_found: cachedAllListings.length,
+      });
+    }
   }
 
   function hasActiveFilters() {
@@ -237,17 +282,46 @@ export default function AreaSearchPage() {
     );
   }
 
+  // Build a cache key from the "location" params (station/city/prefecture/sources)
+  // When only filters change, we can re-filter cached results locally
+  function buildSearchKey(s: string, c: string, p: string, srcs: string[], stns: string[]): string {
+    return JSON.stringify({ s, c, p, srcs: [...srcs].sort(), stns: [...stns].sort() });
+  }
+
   async function handleSearch(
     stationOverride?: string,
     cityOverride?: string,
     prefOverride?: string,
+    forceRefetch?: boolean,
   ) {
-    const s = stationOverride ?? station;
-    const c = cityOverride ?? city;
-    const p = prefOverride ?? prefecture;
+    // Use explicit overrides; fallback to current state only when override
+    // is truly not provided (undefined). Empty string "" IS a valid override.
+    const s = stationOverride !== undefined ? stationOverride : station;
+    const c = cityOverride !== undefined ? cityOverride : city;
+    const p = prefOverride !== undefined ? prefOverride : prefecture;
     // Allow search if we have station/city OR multi-station filter
     if (!s && !c && filters.stations.length === 0) return;
 
+    const searchKey = buildSearchKey(
+      filters.stations.length > 0 ? "" : s,
+      c, p, filters.sources, filters.stations,
+    );
+
+    // --- Client-side re-filtering (no network request needed) ---
+    // Use cache when the location/source params haven't changed
+    if (!forceRefetch && cachedSearchKey === searchKey && cachedSearchKey !== "") {
+      const filtered = applyLocalFilters(cachedAllListings, filters);
+      if (result) {
+        setResult({
+          ...result,
+          listings: filtered,
+          total_found: filtered.length,
+        });
+      }
+      return;
+    }
+
+    // --- Full fetch from backend ---
     setLoading(true);
     setError(null);
     setResult(null);
@@ -260,19 +334,27 @@ export default function AreaSearchPage() {
         max_pages: 3,
       };
 
-      // Apply filters
-      if (filters.priceMin) params.price_min = parseInt(filters.priceMin);
-      if (filters.priceMax) params.price_max = parseInt(filters.priceMax);
-      if (filters.areaMin) params.area_min = parseFloat(filters.areaMin);
-      if (filters.areaMax) params.area_max = parseFloat(filters.areaMax);
-      if (filters.layouts.length > 0) params.layouts = filters.layouts;
-      if (filters.walkMax) params.walking_max = parseInt(filters.walkMax);
-      if (filters.ageMax) params.age_max = parseInt(filters.ageMax);
+      // Only pass filters that constrain the scraping source (SUUMO URL-level)
+      // Post-fetch filtering is done client-side for instant re-filtering
       if (filters.stations.length > 0) params.stations = filters.stations;
       if (filters.sources.length < 3) params.sources = filters.sources;
 
       const res = await searchArea(params);
-      setResult(res);
+
+      // Cache ALL listings (before client-side filtering)
+      const allListings = res.listings ?? [];
+      setCachedAllListings(allListings);
+      setCachedSearchKey(searchKey);
+
+      // Apply client-side filters
+      const filtered = applyLocalFilters(allListings, filters);
+      setResult({
+        ...res,
+        listings: filtered,
+        total_found: filtered.length,
+        total_before_filter: allListings.length,
+      });
+
       if (!res.success) {
         setError("検索結果の取得に失敗しました。");
       }
@@ -284,10 +366,14 @@ export default function AreaSearchPage() {
   }
 
   function handlePreset(preset: typeof PRESET_AREAS[0]) {
-    setStation(preset.station ?? "");
-    setCity(preset.city ?? "");
+    const s = preset.station ?? "";
+    const c = preset.city ?? "";
+    const p = preset.pref ?? prefecture;
+    setStation(s);
+    setCity(c);
     if (preset.pref) setPrefecture(preset.pref);
-    handleSearch(preset.station, preset.city, preset.pref);
+    // Pass explicit values (NOT undefined) to avoid stale state leakage
+    handleSearch(s, c, p);
   }
 
   async function handleRegister(listing: AreaSearchListing) {
@@ -579,14 +665,23 @@ export default function AreaSearchPage() {
           </div>
 
           {/* Search with filters */}
-          <div className="mt-4 flex justify-end">
+          <div className="mt-4 flex justify-end gap-2">
             <button
               onClick={() => handleSearch()}
               disabled={loading || (!station && !city && filters.stations.length === 0)}
               className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-medium transition-colors"
             >
-              {loading ? "検索中..." : "この条件で検索"}
+              {loading ? "検索中..." : cachedAllListings.length > 0 ? "絞り込み適用" : "この条件で検索"}
             </button>
+            {cachedAllListings.length > 0 && (
+              <button
+                onClick={() => handleSearch(undefined, undefined, undefined, true)}
+                disabled={loading}
+                className="bg-gray-100 text-gray-600 px-4 py-2 rounded-lg hover:bg-gray-200 disabled:opacity-50 text-xs font-medium transition-colors"
+              >
+                再取得
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -621,6 +716,11 @@ export default function AreaSearchPage() {
             <div className="flex items-center gap-3">
               <p className="text-sm text-gray-600">
                 <span className="font-bold text-lg text-gray-900">{result.total_found}</span> 件の物件
+                {cachedAllListings.length > 0 && result.total_found < cachedAllListings.length && (
+                  <span className="text-xs text-gray-400 ml-2">
+                    (全{cachedAllListings.length}件中 絞り込み)
+                  </span>
+                )}
               </p>
               {result.search_urls && Object.entries(result.search_urls as Record<string, string>).map(([src, url]) => url ? (
                 <a
@@ -676,7 +776,14 @@ export default function AreaSearchPage() {
 
           {sorted.length === 0 && (
             <div className="text-center py-8 text-gray-400 text-sm">
-              条件に一致する物件が見つかりませんでした。条件を変更してお試しください。
+              {cachedAllListings.length > 0 ? (
+                <>
+                  <p>絞り込み条件に一致する物件がありません。</p>
+                  <p className="mt-1">全{cachedAllListings.length}件取得済み — <button onClick={resetFilters} className="text-blue-500 hover:underline">条件をリセット</button>して再表示できます。</p>
+                </>
+              ) : (
+                "条件に一致する物件が見つかりませんでした。条件を変更してお試しください。"
+              )}
             </div>
           )}
 

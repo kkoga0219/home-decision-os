@@ -16,6 +16,18 @@ class Settings(BaseSettings):
     # External APIs
     mlit_api_key: str = ""  # 不動産情報ライブラリ API key
 
+    # LINE Messaging API (for new-listing alerts)
+    # NOTE: LINE Notify was discontinued on 2025-03-31; this uses the
+    # LINE Messaging API (official account). Set the channel access token
+    # and the push target (a userId / groupId / roomId). If the target is
+    # left blank, the connector falls back to broadcast.
+    line_channel_token: str = ""  # HDOS_LINE_CHANNEL_TOKEN
+    line_target_id: str = ""  # HDOS_LINE_TARGET_ID (userId/groupId/roomId)
+
+    # New-listing alert: where to persist the set of already-seen listings
+    # so that only genuinely new properties trigger a notification.
+    alert_state_path: str = ".alert_state/tsukaguchi_seen.json"
+
     model_config = {"env_prefix": "HDOS_"}
 
 

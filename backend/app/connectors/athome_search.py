@@ -93,13 +93,18 @@ class AthomeSearchConnector(BaseConnector):
         city_name: str = "",
         prefecture: str = "",
         max_pages: int = 2,
+        property_type: str = "mansion",
         **kwargs: Any,
     ) -> ConnectorResult:
-        """Fetch listings from athome."""
+        """Fetch listings from athome.
+
+        property_type: "mansion" (中古マンション) or "house" (中古戸建て).
+        """
         base_url = self._resolve_url(
             station_name=station_name,
             city_name=city_name,
             prefecture=prefecture,
+            property_type=property_type,
         )
         if not base_url:
             return ConnectorResult(
@@ -209,8 +214,11 @@ class AthomeSearchConnector(BaseConnector):
         station_name: str = "",
         city_name: str = "",
         prefecture: str = "",
+        property_type: str = "mansion",
     ) -> str | None:
-        base = "https://www.athome.co.jp/mansion/chuko"
+        # 中古マンション → /mansion/chuko   中古戸建て → /kodate/chuko
+        kind = "kodate" if property_type == "house" else "mansion"
+        base = f"https://www.athome.co.jp/{kind}/chuko"
 
         # City lookup
         if city_name and city_name in _CITY_SLUGS:

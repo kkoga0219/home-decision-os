@@ -66,8 +66,60 @@ Given a property and your financial assumptions, the system calculates:
 | `POST`   | `/connectors/url-preview` | Extract metadata from property listing URL |
 | `POST`   | `/connectors/market-data` | Fetch MLIT transaction data (requires API key) |
 | `POST`   | `/connectors/rent-estimate` | Estimate monthly rent for a property |
+| `POST`   | `/connectors/alerts/tsukaguchi/run` | Run the 塚口 new-listing alert and push matches to LINE |
 
 Interactive API docs available at `http://localhost:8000/docs` (Swagger UI).
+
+## 塚口エリア 新着物件アラート (LINE通知)
+
+塚口エリアの**中古マンション・中古戸建て**の新着を定期巡回し、徒歩条件を満たす物件が
+出たら **LINE** に通知します。
+
+### 通知条件
+
+物件が次の **いずれか** を満たすと通知対象になります（`tsukaguchi_filter.py`）:
+
+- **阪急塚口** 徒歩 **10分以内**、または
+- **阪急塚口・JR塚口 の両方** が徒歩 **15分以内**
+
+> SUUMO / HOME'S / athome の検索カードは最寄り路線しか表示しないことが多いため、
+> 路線名が不明な「塚口」徒歩10分以内は阪急塚口とみなして通知します
+> （取りこぼし回避。`assume_unknown_is_hankyu=false` で無効化可）。
+
+### セットアップ
+
+1. **LINE Messaging API チャネル**を作成（LINE公式アカウント）。
+   ※ LINE Notify は 2025-03-31 に終了したため Messaging API を使用します。
+2. 次の環境変数（GitHub Actions では Secrets）を設定:
+
+   | 変数 | 用途 |
+   |------|------|
+   | `HDOS_LINE_CHANNEL_TOKEN` | チャネルアクセストークン（必須） |
+   | `HDOS_LINE_TARGET_ID` | 通知先 userId/groupId/roomId（空ならブロードキャスト） |
+   | `HDOS_ALERT_STATE_PATH` | 既読リストの保存先（既定: `.alert_state/tsukaguchi_seen.json`） |
+
+3. 定期実行は GitHub Actions ワークフローで行います（3時間ごと / 手動実行可）。
+   `docs/tsukaguchi-alert.workflow.yml` を `.github/workflows/tsukaguchi-alert.yml`
+   にコピーして有効化してください
+   （自動コミットでは `workflows` 権限の都合で `.github/workflows` 配下に
+   直接置けないため `docs/` に同梱しています）。
+   既読状態は `actions/cache` で実行間に保持され、新着のみが通知されます。
+
+> **データ取得についての注意:** SUUMO 等のポータルはデータセンター IP からの
+> アクセスにアンチボット対策を行うことがあり、サーバー実行（GitHub Actions 含む）
+> では結果が 0 件になる場合があります。判定ロジック自体はライブ HTML で検証済みです
+> が、取得が安定しない場合は HOME'S/athome を優先するか、別途プロキシ等の検討が
+> 必要です。
+
+### 手動実行 / 動作確認
+
+```bash
+cd backend
+# 送信せず対象物件だけ確認（既読状態は更新されます）
+python scripts/run_tsukaguchi_alert.py --dry-run
+# 実際に LINE 通知
+python scripts/run_tsukaguchi_alert.py
+```
 
 ## DB Schema
 
@@ -174,6 +226,7 @@ home-decision-os/
 - Rent estimation model (ML-based)
 - Future resale price estimation
 - User authentication and multi-tenancy
+- [x] New-listing alert with LINE notification (塚口エリア)
 - Alert system for price changes
 
 ## Design Intent

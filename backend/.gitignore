@@ -11,3 +11,6 @@ build/
 .pytest_cache/
 htmlcov/
 .coverage
+
+# new-listing alert local state
+.alert_state/

@@ -246,6 +246,7 @@ class SuumoSearchConnector(BaseConnector):
         walking_max: int | None = None,
         age_max: int | None = None,
         stations: list[str] | None = None,
+        property_type: str = "mansion",
         **kwargs: Any,
     ) -> ConnectorResult:
         """Fetch property listings from SUUMO.
@@ -273,6 +274,8 @@ class SuumoSearchConnector(BaseConnector):
             Maximum building age in years
         stations : list[str] | None
             Search multiple stations (overrides station_name)
+        property_type : str
+            "mansion" (中古マンション, default) or "house" (中古戸建て)
         """
         # If multiple stations, aggregate results
         if stations and len(stations) > 1:
@@ -286,6 +289,7 @@ class SuumoSearchConnector(BaseConnector):
                 area_min=area_min,
                 walking_max=walking_max,
                 age_max=age_max,
+                property_type=property_type,
             )
 
         # Build search URL dynamically
@@ -294,6 +298,7 @@ class SuumoSearchConnector(BaseConnector):
             station_name=station_name,
             city_name=city_name,
             prefecture=prefecture,
+            property_type=property_type,
         )
         if base_url is None:
             return ConnectorResult(
@@ -418,6 +423,7 @@ class SuumoSearchConnector(BaseConnector):
         station_name: str = "",
         city_name: str = "",
         prefecture: str = "",
+        property_type: str = "mansion",
     ) -> str | None:
         """Build a SUUMO search URL from location params.
 
@@ -430,6 +436,11 @@ class SuumoSearchConnector(BaseConnector):
         """
         if search_url:
             return search_url
+
+        # SUUMO uses a different path segment per property type:
+        #   中古マンション → /ms/chuko/   中古戸建て → /chukoikkodate/
+        seg = "chukoikkodate" if property_type == "house" else "ms/chuko"
+        base = f"https://suumo.jp/{seg}"
 
         # Resolve prefecture slug
         pref_slug = ""
@@ -445,39 +456,27 @@ class SuumoSearchConnector(BaseConnector):
         # Station lookup
         if station_name and station_name in STATION_DB:
             ps, sc = STATION_DB[station_name]
-            return (
-                f"https://suumo.jp/ms/chuko/{ps}/{sc}/"
-                f"?rn={quote(station_name)}"
-            )
+            return f"{base}/{ps}/{sc}/?rn={quote(station_name)}"
 
         # City lookup
         if city_name and city_name in CITY_DB:
             ps, sc = CITY_DB[city_name]
-            return f"https://suumo.jp/ms/chuko/{ps}/{sc}/"
+            return f"{base}/{ps}/{sc}/"
 
         # Dynamic: prefecture + keyword
         keyword = station_name or city_name
         if not keyword:
             # Prefecture-level browse (all listings)
             if pref_slug:
-                return (
-                    f"https://suumo.jp/ms/chuko/{pref_slug}/"
-                )
+                return f"{base}/{pref_slug}/"
             return None
 
-        # Use prefecture if known, else try hyogo → osaka → all
+        # Use prefecture if known, else nationwide keyword search
         if pref_slug:
-            return (
-                f"https://suumo.jp/ms/chuko/{pref_slug}/"
-                f"?rn={quote(keyword)}"
-            )
+            return f"{base}/{pref_slug}/?rn={quote(keyword)}"
 
-        # Default: search nationwide via keyword on kanto index
-        # (SUUMO redirects to relevant results)
-        return (
-            f"https://suumo.jp/ms/chuko/"
-            f"?rn={quote(keyword)}"
-        )
+        # Default: search nationwide via keyword (SUUMO redirects)
+        return f"{base}/?rn={quote(keyword)}"
 
     async def _fetch_multi_station(
         self,

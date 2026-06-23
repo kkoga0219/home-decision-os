@@ -748,6 +748,56 @@ class ValuationRequest(BaseModel):
     prefecture: str = Field(default="", description="都道府県")
 
 
+# ===================================================================
+# 塚口 New-Listing Alert (LINE notification)
+# ===================================================================
+
+class TsukaguchiAlertRequest(BaseModel):
+    sources: list[str] = Field(
+        default_factory=lambda: ["suumo", "homes", "athome"],
+        description="検索ソース (suumo, homes, athome)",
+    )
+    max_pages: int = Field(default=1, ge=1, le=5)
+    assume_unknown_is_hankyu: bool = Field(
+        default=True,
+        description="路線不明の「塚口」を阪急塚口とみなすか",
+    )
+    dry_run: bool = Field(
+        default=False,
+        description="LINE送信せず判定結果のみ返す（既読状態は更新）",
+    )
+
+
+@router.post("/alerts/tsukaguchi/run")
+async def run_tsukaguchi_alert_endpoint(body: TsukaguchiAlertRequest):
+    """Run the 塚口 new-listing alert and push matches to LINE.
+
+    Searches 中古マンション + 中古戸建て around 塚口, keeps listings within
+    the configured walk distance (阪急塚口 ≤10分、または 阪急・JR両塚口 ≤15分),
+    skips already-seen listings, and notifies via the LINE Messaging API.
+
+    Requires HDOS_LINE_CHANNEL_TOKEN (and optionally HDOS_LINE_TARGET_ID).
+    """
+    from app.services.listing_alert import run_tsukaguchi_alert
+
+    if not body.dry_run and not settings.line_channel_token:
+        raise HTTPException(
+            503,
+            "LINE channel token not configured. Set HDOS_LINE_CHANNEL_TOKEN "
+            "(or call with dry_run=true to preview matches).",
+        )
+
+    return await run_tsukaguchi_alert(
+        channel_token=settings.line_channel_token,
+        target_id=settings.line_target_id,
+        state_path=settings.alert_state_path,
+        sources=body.sources,
+        max_pages=body.max_pages,
+        assume_unknown_is_hankyu=body.assume_unknown_is_hankyu,
+        dry_run=body.dry_run,
+    )
+
+
 @router.post("/valuation")
 async def ml_valuation(body: ValuationRequest):
     """ML-based property valuation using MLIT transaction data.

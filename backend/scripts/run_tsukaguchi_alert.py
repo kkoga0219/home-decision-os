@@ -43,8 +43,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument(
         "--max-pages",
         type=int,
-        default=1,
-        help="各サイトで取得する検索結果ページ数 (default: 1)",
+        default=30,
+        help="各サイトで取得する検索結果ページ数 (default: 30)",
     )
     p.add_argument(
         "--sources",

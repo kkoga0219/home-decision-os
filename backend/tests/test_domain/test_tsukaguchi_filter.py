@@ -68,7 +68,8 @@ class TestEvaluateRuleB:
     def test_both_within_15_qualifies(self):
         r = evaluate_access("阪急神戸線「塚口」徒歩12分／JR宝塚線「塚口」徒歩14分")
         assert r.qualifies
-        assert "両駅" in r.reason
+        assert "阪急塚口" in r.reason
+        assert "JR塚口" in r.reason
 
     def test_both_boundary_15_qualifies(self):
         assert evaluate_access("阪急神戸線「塚口」徒歩15分／JR宝塚線「塚口」徒歩15分").qualifies
@@ -96,8 +97,35 @@ class TestUnknownOperator:
         assert "推定" in r.reason
 
     def test_unknown_over_10_fails_even_when_enabled(self):
+        assert not evaluate_access("塚口駅 徒歩12分", assume_unknown_is_hankyu=True).qualifies
+
+
+class TestInaderaAlternative:
+    """Rule B accepts 猪名寺 as a substitute for JR塚口."""
+
+    def test_hankyu_15_plus_inadera_15_qualifies(self):
+        # Real example: リーデンススクエア塚口 (塚口本町6) on the SUUMO detail
+        # page: "ＪＲ福知山線「猪名寺」歩11分 阪急神戸線「塚口」歩14分"
+        r = evaluate_access("ＪＲ福知山線「猪名寺」歩11分\n阪急神戸線「塚口」歩14分")
+        assert r.qualifies
+        assert "猪名寺" in r.reason
+
+    def test_picks_closer_of_jr_or_inadera_for_reason(self):
+        # Both JR塚口 and 猪名寺 listed — closer one wins the message.
+        r = evaluate_access(
+            "阪急神戸線「塚口」徒歩12分\nＪＲ福知山線「塚口」徒歩14分\n"
+            "ＪＲ福知山線「猪名寺」徒歩9分"
+        )
+        assert r.qualifies
+        assert "猪名寺 徒歩9分" in r.reason
+
+    def test_inadera_alone_without_hankyu_fails(self):
+        # No 阪急塚口 access → neither rule satisfied.
+        assert not evaluate_access("ＪＲ福知山線「猪名寺」徒歩5分").qualifies
+
+    def test_inadera_walks_over_15_fails(self):
         assert not evaluate_access(
-            "塚口駅 徒歩12分", assume_unknown_is_hankyu=True
+            "阪急神戸線「塚口」徒歩14分\nＪＲ福知山線「猪名寺」徒歩16分"
         ).qualifies
 
 
@@ -106,15 +134,12 @@ class TestBusSegments:
 
     def test_bus_to_hankyu_tsukaguchi_rejected(self):
         # athome example: "阪急神戸線 「塚口」駅 【バス】21分 城ノ堀 停歩2分"
-        assert not evaluate_access(
-            "阪急神戸線 「塚口」駅 【バス】21分 城ノ堀 停歩2分"
-        ).qualifies
+        assert not evaluate_access("阪急神戸線 「塚口」駅 【バス】21分 城ノ堀 停歩2分").qualifies
 
     def test_bus_segment_with_other_walk_segments_still_evaluated(self):
         # Bus to 塚口 rejected, but a separate walking line to 塚口 still wins.
         r = evaluate_access(
-            "阪急神戸線 「塚口」駅 【バス】21分 城ノ堀 停歩2分\n"
-            "阪急神戸線 「塚口」駅 徒歩7分"
+            "阪急神戸線 「塚口」駅 【バス】21分 城ノ堀 停歩2分\n阪急神戸線 「塚口」駅 徒歩7分"
         )
         assert r.qualifies
         assert "徒歩7分" in r.reason

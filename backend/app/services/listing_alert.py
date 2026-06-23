@@ -20,10 +20,18 @@ import asyncio
 import logging
 from typing import Any
 
+import httpx
+
 from app.connectors.athome_search import AthomeSearchConnector
 from app.connectors.homes_search import HomesSearchConnector
 from app.connectors.line_notify import LineNotifyConnector
-from app.connectors.suumo_search import SuumoSearchConnector
+from app.connectors.suumo_search import (
+    HEADERS as _SUUMO_HEADERS,
+)
+from app.connectors.suumo_search import (
+    SuumoSearchConnector,
+    fetch_suumo_full_access,
+)
 from app.services.alert_state import AlertState, listing_key
 from app.services.tsukaguchi_filter import evaluate_access, layout_meets_minimum
 
@@ -50,7 +58,7 @@ _MAX_NOTIFY = 30
 async def gather_candidates(
     *,
     sources: list[str] | None = None,
-    max_pages: int = 1,
+    max_pages: int = 30,
     assume_unknown_is_hankyu: bool = False,
     use_browser: bool = True,
     min_rooms: int = 3,
@@ -88,7 +96,11 @@ async def gather_candidates(
 
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    qualifying: dict[str, dict[str, Any]] = {}
+    # First pass: collect all candidates that pass the layout filter, then
+    # for SUUMO listings whose list-card access doesn't already mention
+    # 塚口/猪名寺, enrich `access` from the detail page (SUUMO list cards
+    # show only one rep station, hiding e.g. "阪急塚口 徒歩14分").
+    pending: list[tuple[str, dict[str, Any], Any]] = []
     for res in results:
         if isinstance(res, Exception):
             logger.warning("alert search task failed: %s", res)
@@ -97,21 +109,106 @@ async def gather_candidates(
         if not getattr(result, "success", False):
             continue
         for listing in result.data.get("listings", []):
-            verdict = evaluate_access(
-                listing.get("access", ""),
-                assume_unknown_is_hankyu=assume_unknown_is_hankyu,
-            )
-            if not verdict.qualifies:
-                continue
             if not layout_meets_minimum(listing.get("layout", ""), min_rooms):
                 continue
-            listing.setdefault("source", _source_of(result))
-            listing["property_type"] = ptype
-            listing["property_type_label"] = _TYPE_LABEL[ptype]
-            listing["match_reason"] = verdict.reason
-            qualifying[listing_key(listing)] = listing
+            pending.append((ptype, listing, result))
+
+    await _enrich_suumo_access(pending)
+
+    qualifying: dict[str, dict[str, Any]] = {}
+    for ptype, listing, result in pending:
+        verdict = evaluate_access(
+            listing.get("access", ""),
+            assume_unknown_is_hankyu=assume_unknown_is_hankyu,
+        )
+        if not verdict.qualifies:
+            continue
+        listing.setdefault("source", _source_of(result))
+        listing["property_type"] = ptype
+        listing["property_type_label"] = _TYPE_LABEL[ptype]
+        listing["match_reason"] = verdict.reason
+        qualifying[listing_key(listing)] = listing
 
     return list(qualifying.values())
+
+
+# Address-based trigger: 町 names within plausible walking distance of
+# 阪急塚口 / JR塚口 / 猪名寺. If the LIST-CARD address contains any of
+# these tokens, we fetch the detail page to get all rail accesses (the
+# card only prints one rep station which often hides 塚口).
+_ENRICH_ADDRESS_TOKENS = (
+    "塚口本町",
+    "南塚口町",
+    "東塚口町",
+    "北塚口町",
+    "上坂部",
+    "下坂部",
+    "名神町",
+    "南武庫之荘",
+    "東難波町",
+    "御園",
+    "富松町",
+    "久々知",
+    "猪名寺",
+    "若王寺",
+    "戸ノ内町",
+)
+# Cap enrichments per run to keep us polite (and runtime bounded).
+_MAX_SUUMO_ENRICH = 80
+
+
+async def _enrich_suumo_access(
+    pending: list[tuple[str, dict[str, Any], Any]],
+) -> None:
+    """For SUUMO listings whose list-card access hides 塚口/猪名寺 access,
+    fetch the detail page and replace `access` with the full 交通 row.
+
+    Triggered when the listing's ADDRESS sits in the 塚口 walking shed —
+    those are the ones SUUMO most often mislabels with a non-塚口 rep
+    station (e.g. 塚口本町6 listings tagged "猪名寺 徒歩11分" only).
+    """
+    from app.config import settings
+
+    def _needs_enrich(ls: dict[str, Any]) -> bool:
+        if not ls.get("url"):
+            return False
+        # Skip only if the list-card access ALREADY qualifies — the card
+        # might mention 塚口/猪名寺 but only partially (e.g. just 猪名寺,
+        # missing 阪急塚口), in which case we still need the detail page.
+        if evaluate_access(ls.get("access", "")).qualifies:
+            return False
+        address = ls.get("address", "")
+        return any(tok in address for tok in _ENRICH_ADDRESS_TOKENS)
+
+    targets = [
+        ls
+        for (_ptype, ls, result) in pending
+        if _source_of(result) == "suumo" and _needs_enrich(ls)
+    ][:_MAX_SUUMO_ENRICH]
+    if not targets:
+        return
+    logger.info("SUUMO enrichment: fetching %d detail pages", len(targets))
+
+    sem = asyncio.Semaphore(4)
+
+    async def _one(client: httpx.AsyncClient, ls: dict[str, Any]) -> None:
+        async with sem:
+            full = await fetch_suumo_full_access(client, ls["url"])
+            if full:
+                ls["access"] = full
+                ls["access_method"] = "detail-page"
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=20,
+            follow_redirects=True,
+            http2=False,
+            headers=_SUUMO_HEADERS,
+            proxy=settings.scrape_proxy or None,
+        ) as client:
+            await asyncio.gather(*[_one(client, ls) for ls in targets])
+    except Exception as exc:  # noqa: BLE001 - non-fatal enrichment
+        logger.info("SUUMO enrichment failed: %s", exc)
 
 
 def _source_of(result: Any) -> str:
@@ -131,7 +228,7 @@ async def run_tsukaguchi_alert(
     target_id: str = "",
     state_path: str,
     sources: list[str] | None = None,
-    max_pages: int = 1,
+    max_pages: int = 30,
     assume_unknown_is_hankyu: bool = False,
     use_browser: bool = True,
     min_rooms: int = 3,

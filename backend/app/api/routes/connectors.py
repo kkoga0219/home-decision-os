@@ -757,7 +757,7 @@ class TsukaguchiAlertRequest(BaseModel):
         default_factory=lambda: ["suumo", "homes", "athome"],
         description="検索ソース (suumo, homes, athome)",
     )
-    max_pages: int = Field(default=1, ge=1, le=5)
+    max_pages: int = Field(default=30, ge=1, le=50)
     assume_unknown_is_hankyu: bool = Field(
         default=False,
         description="路線不明の「塚口」を阪急塚口とみなすか（誤検知抑制のため既定OFF）",

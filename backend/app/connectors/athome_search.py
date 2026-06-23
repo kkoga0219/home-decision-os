@@ -443,6 +443,15 @@ def _parse_bukken(
         if am:
             info["floor_area_sqm"] = float(am.group(1))
 
+    # Build year — from bukkenInfo.chikunengetsu, e.g. "1969年3月（築57年4ヶ月）".
+    bukken_info = item.get("bukkenInfo")
+    if isinstance(bukken_info, dict):
+        chiku = bukken_info.get("chikunengetsu", "")
+        ym = re.search(r"(\d{4})年", chiku)
+        if ym:
+            info["built_year"] = int(ym.group(1))
+            info["built_date"] = chiku
+
     if "price_jpy" in info or "name" in info:
         return info
     return None

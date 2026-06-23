@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     # Minimum number of rooms for the alert (3 → 3LDK 以上).
     alert_min_rooms: int = 3
 
+    # Exclude mansions built before this year (houses are exempt).
+    # 1991 → drops 中古マンション built in 1990 or earlier. 0 disables.
+    alert_mansion_min_built_year: int = 1991
+
     # My-list watcher: file (committed) of URLs to track for price /
     # availability changes, and where to persist their snapshots.
     mylist_path: str = "mylist.txt"

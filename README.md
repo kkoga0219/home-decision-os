@@ -81,13 +81,19 @@ Interactive API docs available at `http://localhost:8000/docs` (Swagger UI).
 
 1. **徒歩条件**（`tsukaguchi_filter.py`）— 次のいずれか:
    - **阪急塚口** 徒歩 **10分以内**、または
-   - **阪急塚口・JR塚口 の両方** が徒歩 **15分以内**
-2. **間取り**: **3LDK 以上**（部屋数3以上。`HDOS_ALERT_MIN_ROOMS` / `--min-rooms` で変更可）
+   - **阪急塚口** 徒歩 **15分以内** かつ
+     （**JR塚口** または **猪名寺** が徒歩 **15分以内**）
+2. **間取り**: **3LDK 以上**（部屋数3以上。`HDOS_ALERT_MIN_ROOMS` で変更可）
+3. **築年（マンションのみ）**: **1990年以前の中古マンションは除外**
+   （`HDOS_ALERT_MANSION_MIN_BUILT_YEAR`、既定 1991。0で無効。戸建ては対象外）
 
-> SUUMO / HOME'S の検索カードは最寄り路線しか表示しないことが多いため、
-> 路線名が不明な「塚口」徒歩10分以内は阪急塚口とみなして通知します
-> （取りこぼし回避。`assume_unknown_is_hankyu=false` で無効化可）。
-> athome は各物件の全路線アクセスを取得するため、ルール (B) も判定できます。
+さらに、**同じ建物・同じ部屋（同額・同間取り）の重複掲載は1件にまとめます**。
+同じ物件を複数の不動産会社が別々に掲載している場合（別々のURLになる）、代表
+1件＋「別掲載 N件」として通知し、残りのURLも折りたたんで表示します。
+
+> SUUMO の一覧カードは最寄り1路線しか表示しないため、住所が塚口エリアの物件は
+> 詳細ページを取得して全路線アクセスで判定します（リーデンススクエア塚口等の
+> 取りこぼし防止）。athome は各物件の全路線アクセスを最初から取得します。
 
 ### セットアップ
 
@@ -101,6 +107,7 @@ Interactive API docs available at `http://localhost:8000/docs` (Swagger UI).
    | `HDOS_LINE_TARGET_ID` | 通知先 userId/groupId/roomId（空ならブロードキャスト） |
    | `HDOS_ALERT_STATE_PATH` | 既読リストの保存先（既定: `.alert_state/tsukaguchi_seen.json`） |
    | `HDOS_ALERT_MIN_ROOMS` | 最低部屋数（既定 3 = 3LDK以上） |
+   | `HDOS_ALERT_MANSION_MIN_BUILT_YEAR` | マンション築年下限（既定 1991 = 1990年以前除外） |
    | `HDOS_ALERT_USE_BROWSER` | ブラウザ取得の ON/OFF（既定 true） |
    | `HDOS_SCRAPE_PROXY` | 任意。アンチボット回避用プロキシ（後述） |
 

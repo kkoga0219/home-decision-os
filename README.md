@@ -104,7 +104,7 @@ Interactive API docs available at `http://localhost:8000/docs` (Swagger UI).
    | `HDOS_ALERT_USE_BROWSER` | ブラウザ取得の ON/OFF（既定 true） |
    | `HDOS_SCRAPE_PROXY` | 任意。アンチボット回避用プロキシ（後述） |
 
-3. 定期実行は GitHub Actions ワークフローで行います（3時間ごと / 手動実行可）。
+3. 定期実行は GitHub Actions ワークフローで行います（**毎日 JST 09:01 と 22:01** / 手動実行可）。
    `docs/tsukaguchi-alert.workflow.yml` を `.github/workflows/tsukaguchi-alert.yml`
    にコピーして有効化してください
    （自動コミットでは `workflows` 権限の都合で `.github/workflows` 配下に

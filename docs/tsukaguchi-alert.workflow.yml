@@ -13,8 +13,9 @@ name: 塚口 新着物件アラート
 
 on:
   schedule:
-    # 3時間ごと（UTC）。JST では 0,3,6,9... 時に相当。
-    - cron: "0 */3 * * *"
+    # 毎日 JST 09:01 と 22:01 に実行 (UTC 00:01 / 13:01)。
+    - cron: "1 0 * * *"
+    - cron: "1 13 * * *"
   workflow_dispatch:
     inputs:
       dry_run:

@@ -94,11 +94,15 @@ class AthomeSearchConnector(BaseConnector):
         prefecture: str = "",
         max_pages: int = 2,
         property_type: str = "mansion",
+        use_browser: bool = False,
         **kwargs: Any,
     ) -> ConnectorResult:
         """Fetch listings from athome.
 
         property_type: "mansion" (中古マンション) or "house" (中古戸建て).
+        use_browser: render with a headless browser (Playwright); athome's
+            prices are JS-rendered, so this also auto-falls back to the
+            browser when the HTTP response lacks listing markup.
         """
         base_url = self._resolve_url(
             station_name=station_name,
@@ -133,8 +137,8 @@ class AthomeSearchConnector(BaseConnector):
                     if page > 1:
                         await asyncio.sleep(1.0)
 
-                    html = await self._fetch_page_with_retry(
-                        client, url, page, errors,
+                    html = await self._get_page_html(
+                        client, url, page, errors, use_browser,
                     )
                     if html is None:
                         break
@@ -162,6 +166,35 @@ class AthomeSearchConnector(BaseConnector):
             },
             errors=errors,
         )
+
+    @staticmethod
+    async def _get_page_html(
+        client: httpx.AsyncClient,
+        url: str,
+        page: int,
+        errors: list[str],
+        use_browser: bool,
+    ) -> str | None:
+        """Get HTML via HTTP, with an optional browser fallback.
+
+        athome renders prices client-side, so when ``use_browser`` is set and
+        the HTTP response lacks listing markup we retry the page with a
+        headless browser (Playwright). Degrades to a no-op without Playwright.
+        """
+        html = await AthomeSearchConnector._fetch_page_with_retry(
+            client, url, page, errors,
+        )
+
+        if use_browser and (html is None or "card-box" not in html):
+            from app.connectors import browser_fetch
+
+            rendered = await browser_fetch.fetch_html(
+                url, wait_selector=".card-box",
+            )
+            if rendered and "card-box" in rendered:
+                return rendered
+
+        return html
 
     @staticmethod
     async def _fetch_page_with_retry(

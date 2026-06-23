@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     # so that only genuinely new properties trigger a notification.
     alert_state_path: str = ".alert_state/tsukaguchi_seen.json"
 
+    # Render listing pages with a headless browser (Playwright) to defeat
+    # SUUMO / athome anti-bot gates. Ignored gracefully if Playwright is not
+    # installed. Disable with HDOS_ALERT_USE_BROWSER=false.
+    alert_use_browser: bool = True
+
     model_config = {"env_prefix": "HDOS_"}
 
 

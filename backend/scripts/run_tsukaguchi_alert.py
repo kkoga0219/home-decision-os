@@ -51,6 +51,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         default="suumo,homes,athome",
         help="カンマ区切りの検索ソース (default: suumo,homes,athome)",
     )
+    p.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Playwrightヘッドレスブラウザを使わず HTTP のみで取得",
+    )
     return p.parse_args(argv)
 
 
@@ -71,6 +76,7 @@ async def _main(argv: list[str]) -> int:
         state_path=settings.alert_state_path,
         sources=sources,
         max_pages=args.max_pages,
+        use_browser=not args.no_browser,
         dry_run=args.dry_run,
     )
 

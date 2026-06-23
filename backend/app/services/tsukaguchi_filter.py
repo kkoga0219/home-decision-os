@@ -52,7 +52,13 @@ def _classify_operator(segment: str) -> str:
     """Classify a 塚口 access segment as 'hankyu', 'jr' or 'unknown'."""
     if "阪急" in segment or "ハンキュウ" in segment:
         return "hankyu"
-    if re.search(r"JR", segment, re.IGNORECASE) or "福知山線" in segment or "宝塚線" in segment:
+    # SUUMO renders "JR" full-width as "ＪＲ"; match both.
+    if (
+        re.search(r"JR", segment, re.IGNORECASE)
+        or "ＪＲ" in segment
+        or "福知山線" in segment
+        or "宝塚線" in segment
+    ):
         return "jr"
     return "unknown"
 

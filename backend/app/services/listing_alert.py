@@ -52,12 +52,17 @@ async def gather_candidates(
     sources: list[str] | None = None,
     max_pages: int = 1,
     assume_unknown_is_hankyu: bool = True,
+    use_browser: bool = True,
 ) -> list[dict[str, Any]]:
     """Search all sources/types and return qualifying listings.
 
     The returned listings are de-duplicated by listing key and annotated
     with ``source``, ``property_type``, ``property_type_label`` and
     ``match_reason``. No state / notification side effects.
+
+    ``use_browser`` enables the Playwright fallback for SUUMO / athome (see
+    ``browser_fetch``); it is ignored gracefully if Playwright is not
+    installed.
     """
     srcs = [s.lower() for s in (sources or ["suumo", "homes", "athome"])]
 
@@ -68,6 +73,7 @@ async def gather_candidates(
             prefecture=_PREFECTURE,
             max_pages=max_pages,
             property_type=ptype,
+            use_browser=use_browser,
         )
 
     tasks = []
@@ -124,6 +130,7 @@ async def run_tsukaguchi_alert(
     sources: list[str] | None = None,
     max_pages: int = 1,
     assume_unknown_is_hankyu: bool = True,
+    use_browser: bool = True,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Run the full alert pipeline and (optionally) push to LINE.
@@ -134,6 +141,7 @@ async def run_tsukaguchi_alert(
         sources=sources,
         max_pages=max_pages,
         assume_unknown_is_hankyu=assume_unknown_is_hankyu,
+        use_browser=use_browser,
     )
 
     state = AlertState.load(state_path)

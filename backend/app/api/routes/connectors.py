@@ -762,6 +762,10 @@ class TsukaguchiAlertRequest(BaseModel):
         default=True,
         description="路線不明の「塚口」を阪急塚口とみなすか",
     )
+    use_browser: bool = Field(
+        default=True,
+        description="Playwrightヘッドレスブラウザで取得（アンチボット回避）",
+    )
     dry_run: bool = Field(
         default=False,
         description="LINE送信せず判定結果のみ返す（既読状態は更新）",
@@ -794,6 +798,7 @@ async def run_tsukaguchi_alert_endpoint(body: TsukaguchiAlertRequest):
         sources=body.sources,
         max_pages=body.max_pages,
         assume_unknown_is_hankyu=body.assume_unknown_is_hankyu,
+        use_browser=body.use_browser,
         dry_run=body.dry_run,
     )
 

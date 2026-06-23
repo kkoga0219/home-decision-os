@@ -48,7 +48,10 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install ".[dev]"
+          pip install ".[dev,browser]"
+
+      - name: Install Playwright browser
+        run: python -m playwright install --with-deps chromium
 
       # Persist the "already seen" listings between scheduled runs so that
       # only genuinely new properties trigger a notification.

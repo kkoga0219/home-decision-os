@@ -247,6 +247,7 @@ class SuumoSearchConnector(BaseConnector):
         age_max: int | None = None,
         stations: list[str] | None = None,
         property_type: str = "mansion",
+        use_browser: bool = False,
         **kwargs: Any,
     ) -> ConnectorResult:
         """Fetch property listings from SUUMO.
@@ -276,6 +277,11 @@ class SuumoSearchConnector(BaseConnector):
             Search multiple stations (overrides station_name)
         property_type : str
             "mansion" (中古マンション, default) or "house" (中古戸建て)
+        use_browser : bool
+            Render pages with a headless browser (Playwright) to defeat
+            SUUMO's anti-bot / JS gate. When False, the HTTP path is used
+            but automatically falls back to the browser if a page comes
+            back as a challenge/empty page (and Playwright is installed).
         """
         # If multiple stations, aggregate results
         if stations and len(stations) > 1:
@@ -290,6 +296,7 @@ class SuumoSearchConnector(BaseConnector):
                 walking_max=walking_max,
                 age_max=age_max,
                 property_type=property_type,
+                use_browser=use_browser,
             )
 
         # Build search URL dynamically
@@ -339,8 +346,8 @@ class SuumoSearchConnector(BaseConnector):
                     if page > 1:
                         await asyncio.sleep(1.0)
 
-                    html = await self._fetch_page_with_retry(
-                        client, url, page, errors,
+                    html = await self._get_page_html(
+                        client, url, page, errors, use_browser,
                     )
                     if html is None:
                         break
@@ -369,6 +376,39 @@ class SuumoSearchConnector(BaseConnector):
             },
             errors=errors,
         )
+
+    @staticmethod
+    async def _get_page_html(
+        client: httpx.AsyncClient,
+        url: str,
+        page: int,
+        errors: list[str],
+        use_browser: bool,
+    ) -> str | None:
+        """Get a page's HTML via HTTP, with an optional browser fallback.
+
+        Tries the cheap HTTP path first. If ``use_browser`` is set and the
+        response is missing/looks like a challenge page, it retries the page
+        with a headless browser (Playwright). The browser fallback degrades
+        to a no-op when Playwright is not installed.
+        """
+        html = await SuumoSearchConnector._fetch_page_with_retry(
+            client, url, page, errors,
+        )
+
+        if use_browser and (html is None or _looks_like_challenge(html)):
+            from app.connectors import browser_fetch
+
+            logger.info(
+                "SUUMO page %d empty/challenge; retrying via browser", page,
+            )
+            rendered = await browser_fetch.fetch_html(
+                url, wait_selector="div.property_unit",
+            )
+            if rendered and not _looks_like_challenge(rendered):
+                return rendered
+
+        return html
 
     @staticmethod
     async def _fetch_page_with_retry(
@@ -453,10 +493,14 @@ class SuumoSearchConnector(BaseConnector):
                 if full:
                     pref_slug = PREFECTURE_SLUGS[full]
 
-        # Station lookup
+        # Station lookup → city-level list page.
+        # NOTE: appending "?rn=<station>" makes SUUMO return an error page
+        # ("必要な情報が不足しているため…") — the rn code is not a valid
+        # free-text filter here. We use the city list URL and let callers
+        # filter by station/walk distance on the parsed results instead.
         if station_name and station_name in STATION_DB:
             ps, sc = STATION_DB[station_name]
-            return f"{base}/{ps}/{sc}/?rn={quote(station_name)}"
+            return f"{base}/{ps}/{sc}/"
 
         # City lookup
         if city_name and city_name in CITY_DB:
@@ -635,6 +679,18 @@ def _build_suumo_qs(
 # ---------------------------------------------------------------------------
 # HTML parsing – based on SUUMO's actual DOM structure
 # ---------------------------------------------------------------------------
+
+def _looks_like_challenge(html: str) -> bool:
+    """Heuristic: True if the page lacks SUUMO listing markup.
+
+    SUUMO returns HTTP 200 with a small anti-bot / interstitial page when it
+    suspects a non-browser client. Real result pages always contain the
+    ``property_unit`` listing containers.
+    """
+    if not html:
+        return True
+    return "property_unit" not in html
+
 
 def _parse_listing_page(html: str) -> list[dict[str, Any]]:
     """Parse a SUUMO search results page.

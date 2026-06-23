@@ -1,20 +1,19 @@
 name: 塚口 新着物件アラート
 
-# ⚠️ セットアップ: このファイルを `.github/workflows/tsukaguchi-alert.yml`
-# にコピー（移動）してください。GitHub App の権限制約により自動コミットでは
-# .github/workflows 配下へ直接配置できないため docs/ に置いています。
-#
 # 塚口エリア（中古マンション/中古戸建て）の新着を定期巡回し、
-# 条件に合う物件が出たら LINE に通知する。
+# 条件に合う物件が出たら LINE に通知する。マイリスト(mylist.txt)の
+# 価格変更・成約も追跡する。
 #
 # 必要な Secrets:
 #   HDOS_LINE_CHANNEL_TOKEN  LINE Messaging API のチャネルアクセストークン (必須)
 #   HDOS_LINE_TARGET_ID      通知先 userId/groupId/roomId (任意・空ならブロードキャスト)
+#   HDOS_SCRAPE_PROXY        任意。datacenter IP がブロックされる場合の住宅用プロキシ
 
 on:
   schedule:
-    # 3時間ごと（UTC）。JST では 0,3,6,9... 時に相当。
-    - cron: "0 */3 * * *"
+    # 毎日 JST 09:01 と 22:01 に実行 (UTC 00:01 / 13:01)。
+    - cron: "1 0 * * *"
+    - cron: "1 13 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -37,6 +36,8 @@ jobs:
       HDOS_LINE_TARGET_ID: ${{ secrets.HDOS_LINE_TARGET_ID }}
       HDOS_ALERT_STATE_PATH: .alert_state/tsukaguchi_seen.json
       HDOS_ALERT_MIN_ROOMS: "3"
+      HDOS_MYLIST_PATH: ../mylist.txt
+      HDOS_MYLIST_SNAPSHOTS_PATH: .alert_state/mylist_snapshots.json
       # Optional: set a residential proxy secret if athome/SUUMO block the
       # GitHub Actions datacenter IP. Leave the secret unset for direct.
       HDOS_SCRAPE_PROXY: ${{ secrets.HDOS_SCRAPE_PROXY }}
@@ -57,8 +58,8 @@ jobs:
       - name: Install Playwright browser
         run: python -m playwright install --with-deps chromium
 
-      # Persist the "already seen" listings between scheduled runs so that
-      # only genuinely new properties trigger a notification.
+      # Persist the "already seen" listings + mylist snapshots between runs
+      # so only genuinely new / changed properties trigger a notification.
       - name: Restore alert state
         uses: actions/cache@v4
         with:
@@ -67,7 +68,7 @@ jobs:
           restore-keys: |
             tsukaguchi-alert-state-
 
-      - name: Run alert
+      - name: Run alert (new listings + mylist diff)
         run: |
-          python scripts/run_tsukaguchi_alert.py \
+          python scripts/run_tsukaguchi_alert.py --mode both \
             ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '--dry-run' || '' }}

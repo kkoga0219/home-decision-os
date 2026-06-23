@@ -95,13 +95,18 @@ class HomesSearchConnector(BaseConnector):
         city_name: str = "",
         prefecture: str = "",
         max_pages: int = 2,
+        property_type: str = "mansion",
         **kwargs: Any,
     ) -> ConnectorResult:
-        """Fetch listings from HOME'S."""
+        """Fetch listings from HOME'S.
+
+        property_type: "mansion" (中古マンション) or "house" (中古戸建て).
+        """
         base_url = self._resolve_url(
             station_name=station_name,
             city_name=city_name,
             prefecture=prefecture,
+            property_type=property_type,
         )
         if not base_url:
             return ConnectorResult(
@@ -216,34 +221,26 @@ class HomesSearchConnector(BaseConnector):
         station_name: str = "",
         city_name: str = "",
         prefecture: str = "",
+        property_type: str = "mansion",
     ) -> str | None:
+        # 中古マンション → /mansion/chuko/   中古戸建て → /kodate/chuko/
+        kind = "kodate" if property_type == "house" else "mansion"
+        base = f"https://www.homes.co.jp/{kind}/chuko"
+
         # City lookup
         if city_name and city_name in _CITY_SLUGS:
             pref, city = _CITY_SLUGS[city_name]
-            return (
-                f"https://www.homes.co.jp/mansion/chuko/"
-                f"{pref}/{city}/list/"
-            )
+            return f"{base}/{pref}/{city}/list/"
 
         # Prefecture + keyword
         pref_slug = _PREF_SLUGS.get(prefecture, "")
         keyword = station_name or city_name
         if pref_slug and keyword:
-            return (
-                f"https://www.homes.co.jp/mansion/chuko/"
-                f"{pref_slug}/list/"
-                f"?keyword={quote(keyword)}"
-            )
+            return f"{base}/{pref_slug}/list/?keyword={quote(keyword)}"
         if pref_slug:
-            return (
-                f"https://www.homes.co.jp/mansion/chuko/"
-                f"{pref_slug}/list/"
-            )
+            return f"{base}/{pref_slug}/list/"
         if keyword:
-            return (
-                f"https://www.homes.co.jp/mansion/chuko/"
-                f"list/?keyword={quote(keyword)}"
-            )
+            return f"{base}/list/?keyword={quote(keyword)}"
         return None
 
 
@@ -310,16 +307,16 @@ def _parse_homes_card(chunk: str) -> dict[str, Any] | None:
         except ValueError:
             pass
 
-    # Address: td.address
+    # Address: td.address (NOT th.address, which holds the "所在地" label)
     m = re.search(
-        r'class="address"[^>]*>([^<]+)<', chunk,
+        r'<td\s+class="address"[^>]*>([^<]+)<', chunk,
     )
     if m:
         info["address"] = m.group(1).strip()
 
-    # Station/access: td.traffic
+    # Station/access: td.traffic (NOT th.traffic, which holds "交通")
     m = re.search(
-        r'class="traffic"[^>]*>([^<]+)<', chunk,
+        r'<td\s+class="traffic"[^>]*>([^<]+)<', chunk,
     )
     if m:
         access = m.group(1).strip()

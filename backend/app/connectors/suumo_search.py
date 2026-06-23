@@ -54,23 +54,52 @@ _RETRY_DELAY = 2.0  # seconds
 # Prefecture → SUUMO URL slug
 # ---------------------------------------------------------------------------
 PREFECTURE_SLUGS: dict[str, str] = {
-    "北海道": "hokkaido", "青森県": "aomori", "岩手県": "iwate",
-    "宮城県": "miyagi", "秋田県": "akita", "山形県": "yamagata",
-    "福島県": "fukushima", "茨城県": "ibaraki", "栃木県": "tochigi",
-    "群馬県": "gunma", "埼玉県": "saitama", "千葉県": "chiba",
-    "東京都": "tokyo", "神奈川県": "kanagawa", "新潟県": "niigata",
-    "富山県": "toyama", "石川県": "ishikawa", "福井県": "fukui",
-    "山梨県": "yamanashi", "長野県": "nagano", "岐阜県": "gifu",
-    "静岡県": "shizuoka", "愛知県": "aichi", "三重県": "mie",
-    "滋賀県": "shiga", "京都府": "kyoto", "大阪府": "osaka",
-    "兵庫県": "hyogo", "奈良県": "nara", "和歌山県": "wakayama",
-    "鳥取県": "tottori", "島根県": "shimane", "岡山県": "okayama",
-    "広島県": "hiroshima", "山口県": "yamaguchi",
-    "徳島県": "tokushima", "香川県": "kagawa",
-    "愛媛県": "ehime", "高知県": "kochi",
-    "福岡県": "fukuoka", "佐賀県": "saga", "長崎県": "nagasaki",
-    "熊本県": "kumamoto", "大分県": "oita",
-    "宮崎県": "miyazaki", "鹿児島県": "kagoshima",
+    "北海道": "hokkaido",
+    "青森県": "aomori",
+    "岩手県": "iwate",
+    "宮城県": "miyagi",
+    "秋田県": "akita",
+    "山形県": "yamagata",
+    "福島県": "fukushima",
+    "茨城県": "ibaraki",
+    "栃木県": "tochigi",
+    "群馬県": "gunma",
+    "埼玉県": "saitama",
+    "千葉県": "chiba",
+    "東京都": "tokyo",
+    "神奈川県": "kanagawa",
+    "新潟県": "niigata",
+    "富山県": "toyama",
+    "石川県": "ishikawa",
+    "福井県": "fukui",
+    "山梨県": "yamanashi",
+    "長野県": "nagano",
+    "岐阜県": "gifu",
+    "静岡県": "shizuoka",
+    "愛知県": "aichi",
+    "三重県": "mie",
+    "滋賀県": "shiga",
+    "京都府": "kyoto",
+    "大阪府": "osaka",
+    "兵庫県": "hyogo",
+    "奈良県": "nara",
+    "和歌山県": "wakayama",
+    "鳥取県": "tottori",
+    "島根県": "shimane",
+    "岡山県": "okayama",
+    "広島県": "hiroshima",
+    "山口県": "yamaguchi",
+    "徳島県": "tokushima",
+    "香川県": "kagawa",
+    "愛媛県": "ehime",
+    "高知県": "kochi",
+    "福岡県": "fukuoka",
+    "佐賀県": "saga",
+    "長崎県": "nagasaki",
+    "熊本県": "kumamoto",
+    "大分県": "oita",
+    "宮崎県": "miyazaki",
+    "鹿児島県": "kagoshima",
     "沖縄県": "okinawa",
 }
 
@@ -246,6 +275,8 @@ class SuumoSearchConnector(BaseConnector):
         walking_max: int | None = None,
         age_max: int | None = None,
         stations: list[str] | None = None,
+        property_type: str = "mansion",
+        use_browser: bool = False,
         **kwargs: Any,
     ) -> ConnectorResult:
         """Fetch property listings from SUUMO.
@@ -273,6 +304,13 @@ class SuumoSearchConnector(BaseConnector):
             Maximum building age in years
         stations : list[str] | None
             Search multiple stations (overrides station_name)
+        property_type : str
+            "mansion" (中古マンション, default) or "house" (中古戸建て)
+        use_browser : bool
+            Render pages with a headless browser (Playwright) to defeat
+            SUUMO's anti-bot / JS gate. When False, the HTTP path is used
+            but automatically falls back to the browser if a page comes
+            back as a challenge/empty page (and Playwright is installed).
         """
         # If multiple stations, aggregate results
         if stations and len(stations) > 1:
@@ -286,6 +324,8 @@ class SuumoSearchConnector(BaseConnector):
                 area_min=area_min,
                 walking_max=walking_max,
                 age_max=age_max,
+                property_type=property_type,
+                use_browser=use_browser,
             )
 
         # Build search URL dynamically
@@ -294,6 +334,7 @@ class SuumoSearchConnector(BaseConnector):
             station_name=station_name,
             city_name=city_name,
             prefecture=prefecture,
+            property_type=property_type,
         )
         if base_url is None:
             return ConnectorResult(
@@ -317,11 +358,14 @@ class SuumoSearchConnector(BaseConnector):
         all_listings: list[dict[str, Any]] = []
         errors: list[str] = []
 
+        from app.config import settings
+
         try:
             async with httpx.AsyncClient(
                 timeout=25,
                 follow_redirects=True,
                 http2=False,
+                proxy=settings.scrape_proxy or None,
             ) as client:
                 for page in range(1, max_pages + 1):
                     if page == 1:
@@ -334,8 +378,12 @@ class SuumoSearchConnector(BaseConnector):
                     if page > 1:
                         await asyncio.sleep(1.0)
 
-                    html = await self._fetch_page_with_retry(
-                        client, url, page, errors,
+                    html = await self._get_page_html(
+                        client,
+                        url,
+                        page,
+                        errors,
+                        use_browser,
                     )
                     if html is None:
                         break
@@ -366,6 +414,46 @@ class SuumoSearchConnector(BaseConnector):
         )
 
     @staticmethod
+    async def _get_page_html(
+        client: httpx.AsyncClient,
+        url: str,
+        page: int,
+        errors: list[str],
+        use_browser: bool,
+    ) -> str | None:
+        """Get a page's HTML via HTTP, with an optional browser fallback.
+
+        Tries the cheap HTTP path first. If ``use_browser`` is set and the
+        response is missing/looks like a challenge page, it retries the page
+        with a headless browser (Playwright). The browser fallback degrades
+        to a no-op when Playwright is not installed.
+        """
+        html = await SuumoSearchConnector._fetch_page_with_retry(
+            client,
+            url,
+            page,
+            errors,
+        )
+
+        if use_browser and (html is None or _looks_like_challenge(html)):
+            from app.config import settings
+            from app.connectors import browser_fetch
+
+            logger.info(
+                "SUUMO page %d empty/challenge; retrying via browser",
+                page,
+            )
+            rendered = await browser_fetch.fetch_html(
+                url,
+                wait_selector="div.property_unit",
+                proxy=settings.scrape_proxy,
+            )
+            if rendered and not _looks_like_challenge(rendered):
+                return rendered
+
+        return html
+
+    @staticmethod
     async def _fetch_page_with_retry(
         client: httpx.AsyncClient,
         url: str,
@@ -376,7 +464,9 @@ class SuumoSearchConnector(BaseConnector):
         for attempt in range(_MAX_RETRIES):
             logger.info(
                 "Fetching SUUMO page %d (attempt %d): %s",
-                page, attempt + 1, url,
+                page,
+                attempt + 1,
+                url,
             )
             headers = {**HEADERS, "Referer": "https://suumo.jp/"}
             resp = await client.get(url, headers=headers)
@@ -387,28 +477,26 @@ class SuumoSearchConnector(BaseConnector):
             if resp.status_code in (202, 429, 503):
                 logger.warning(
                     "SUUMO page %d: HTTP %d, retrying in %.1fs",
-                    page, resp.status_code, _RETRY_DELAY,
+                    page,
+                    resp.status_code,
+                    _RETRY_DELAY,
                 )
                 await asyncio.sleep(_RETRY_DELAY)
                 continue
 
-            errors.append(
-                f"SUUMO page {page}: HTTP {resp.status_code}"
-            )
+            errors.append(f"SUUMO page {page}: HTTP {resp.status_code}")
             return None
 
         # All retries exhausted — try to parse last response anyway
         if resp.status_code in (200, 202):
             logger.info(
                 "SUUMO page %d: using response despite HTTP %d",
-                page, resp.status_code,
+                page,
+                resp.status_code,
             )
             return resp.text
 
-        errors.append(
-            f"SUUMO page {page}: HTTP {resp.status_code} after "
-            f"{_MAX_RETRIES} retries"
-        )
+        errors.append(f"SUUMO page {page}: HTTP {resp.status_code} after {_MAX_RETRIES} retries")
         return None
 
     @staticmethod
@@ -418,6 +506,7 @@ class SuumoSearchConnector(BaseConnector):
         station_name: str = "",
         city_name: str = "",
         prefecture: str = "",
+        property_type: str = "mansion",
     ) -> str | None:
         """Build a SUUMO search URL from location params.
 
@@ -431,53 +520,51 @@ class SuumoSearchConnector(BaseConnector):
         if search_url:
             return search_url
 
+        # SUUMO uses a different path segment per property type:
+        #   中古マンション → /ms/chuko/   中古戸建て → /chukoikkodate/
+        seg = "chukoikkodate" if property_type == "house" else "ms/chuko"
+        base = f"https://suumo.jp/{seg}"
+
         # Resolve prefecture slug
         pref_slug = ""
         if prefecture:
             pref_slug = PREFECTURE_SLUGS.get(prefecture, "")
             if not pref_slug:
                 full = _PREF_SHORT.get(
-                    prefecture.rstrip("都道府県"), "",
+                    prefecture.rstrip("都道府県"),
+                    "",
                 )
                 if full:
                     pref_slug = PREFECTURE_SLUGS[full]
 
-        # Station lookup
+        # Station lookup → city-level list page.
+        # NOTE: appending "?rn=<station>" makes SUUMO return an error page
+        # ("必要な情報が不足しているため…") — the rn code is not a valid
+        # free-text filter here. We use the city list URL and let callers
+        # filter by station/walk distance on the parsed results instead.
         if station_name and station_name in STATION_DB:
             ps, sc = STATION_DB[station_name]
-            return (
-                f"https://suumo.jp/ms/chuko/{ps}/{sc}/"
-                f"?rn={quote(station_name)}"
-            )
+            return f"{base}/{ps}/{sc}/"
 
         # City lookup
         if city_name and city_name in CITY_DB:
             ps, sc = CITY_DB[city_name]
-            return f"https://suumo.jp/ms/chuko/{ps}/{sc}/"
+            return f"{base}/{ps}/{sc}/"
 
         # Dynamic: prefecture + keyword
         keyword = station_name or city_name
         if not keyword:
             # Prefecture-level browse (all listings)
             if pref_slug:
-                return (
-                    f"https://suumo.jp/ms/chuko/{pref_slug}/"
-                )
+                return f"{base}/{pref_slug}/"
             return None
 
-        # Use prefecture if known, else try hyogo → osaka → all
+        # Use prefecture if known, else nationwide keyword search
         if pref_slug:
-            return (
-                f"https://suumo.jp/ms/chuko/{pref_slug}/"
-                f"?rn={quote(keyword)}"
-            )
+            return f"{base}/{pref_slug}/?rn={quote(keyword)}"
 
-        # Default: search nationwide via keyword on kanto index
-        # (SUUMO redirects to relevant results)
-        return (
-            f"https://suumo.jp/ms/chuko/"
-            f"?rn={quote(keyword)}"
-        )
+        # Default: search nationwide via keyword (SUUMO redirects)
+        return f"{base}/?rn={quote(keyword)}"
 
     async def _fetch_multi_station(
         self,
@@ -531,32 +618,65 @@ class SuumoSearchConnector(BaseConnector):
 
 # SUUMO price codes (万円 → code for the pc1/pc2 parameter)
 _PRICE_CODES: list[tuple[int, str]] = [
-    (300, "0300"), (400, "0400"), (500, "0500"),
-    (600, "0600"), (700, "0700"), (800, "0800"),
-    (900, "0900"), (1000, "1000"), (1500, "1500"),
-    (2000, "2000"), (2500, "2500"), (3000, "3000"),
-    (3500, "3500"), (4000, "4000"), (4500, "4500"),
-    (5000, "5000"), (6000, "6000"), (7000, "7000"),
-    (8000, "8000"), (9000, "9000"), (10000, "10000"),
+    (300, "0300"),
+    (400, "0400"),
+    (500, "0500"),
+    (600, "0600"),
+    (700, "0700"),
+    (800, "0800"),
+    (900, "0900"),
+    (1000, "1000"),
+    (1500, "1500"),
+    (2000, "2000"),
+    (2500, "2500"),
+    (3000, "3000"),
+    (3500, "3500"),
+    (4000, "4000"),
+    (4500, "4500"),
+    (5000, "5000"),
+    (6000, "6000"),
+    (7000, "7000"),
+    (8000, "8000"),
+    (9000, "9000"),
+    (10000, "10000"),
 ]
 
 # Walking-minutes codes
 _WALK_CODES: dict[int, str] = {
-    1: "01", 3: "03", 5: "05", 7: "07",
-    10: "10", 15: "15", 20: "20",
+    1: "01",
+    3: "03",
+    5: "05",
+    7: "07",
+    10: "10",
+    15: "15",
+    20: "20",
 }
 
 # Age codes (築年数)
 _AGE_CODES: dict[int, str] = {
-    1: "01", 3: "03", 5: "05", 7: "07",
-    10: "10", 15: "15", 20: "20", 25: "25", 30: "30",
+    1: "01",
+    3: "03",
+    5: "05",
+    7: "07",
+    10: "10",
+    15: "15",
+    20: "20",
+    25: "25",
+    30: "30",
 }
 
 # Area codes (㎡)
 _AREA_CODES: dict[int, str] = {
-    20: "20", 25: "25", 30: "30", 40: "40",
-    50: "50", 60: "60", 70: "70", 80: "80",
-    90: "90", 100: "100",
+    20: "20",
+    25: "25",
+    30: "30",
+    40: "40",
+    50: "50",
+    60: "60",
+    70: "70",
+    80: "80",
+    90: "90",
+    100: "100",
 }
 
 
@@ -637,6 +757,19 @@ def _build_suumo_qs(
 # HTML parsing – based on SUUMO's actual DOM structure
 # ---------------------------------------------------------------------------
 
+
+def _looks_like_challenge(html: str) -> bool:
+    """Heuristic: True if the page lacks SUUMO listing markup.
+
+    SUUMO returns HTTP 200 with a small anti-bot / interstitial page when it
+    suspects a non-browser client. Real result pages always contain the
+    ``property_unit`` listing containers.
+    """
+    if not html:
+        return True
+    return "property_unit" not in html
+
+
 def _parse_listing_page(html: str) -> list[dict[str, Any]]:
     """Parse a SUUMO search results page.
 
@@ -661,7 +794,8 @@ def _parse_listing_page(html: str) -> list[dict[str, Any]]:
     # Split HTML by property_unit boundaries
     # Each card starts with <div class="property_unit...">
     card_chunks = re.split(
-        r'<div\s+class="property_unit(?:\s|")', html,
+        r'<div\s+class="property_unit(?:\s|")',
+        html,
     )
 
     for chunk in card_chunks[1:]:  # skip before first card
@@ -678,7 +812,8 @@ def _parse_property_unit(chunk: str) -> dict[str, Any] | None:
 
     # --- Detail page URL ---
     m = re.search(
-        r'href="(/ms/chuko/[^"]*nc_\d+/[^"]*)"', chunk,
+        r'href="(/ms/chuko/[^"]*nc_\d+/[^"]*)"',
+        chunk,
     )
     if m:
         info["url"] = f"https://suumo.jp{m.group(1)}"
@@ -703,9 +838,7 @@ def _parse_property_unit(chunk: str) -> dict[str, Any] | None:
         info["price_text"] = price_text
         m = re.search(r"([\d,]+)\s*万円", price_text)
         if m:
-            info["price_jpy"] = (
-                int(m.group(1).replace(",", "")) * 10_000
-            )
+            info["price_jpy"] = int(m.group(1).replace(",", "")) * 10_000
 
     # 所在地
     if "所在地" in fields:
@@ -813,21 +946,53 @@ def _extract_building_name_from_title(title: str) -> str | None:
     """
     # If the title contains promotional keywords, it's not a name
     promo_keywords = [
-        "頭金", "ローン", "見学", "リフォーム", "リノベ",
-        "即入居", "駅徒歩", "新価格", "値下", "オープン",
-        "ペット", "角部屋", "最上階", "フル",
+        "頭金",
+        "ローン",
+        "見学",
+        "リフォーム",
+        "リノベ",
+        "即入居",
+        "駅徒歩",
+        "新価格",
+        "値下",
+        "オープン",
+        "ペット",
+        "角部屋",
+        "最上階",
+        "フル",
     ]
     if any(kw in title for kw in promo_keywords):
         return None
 
     # Check if it looks like a building name (contains typical suffixes)
     name_suffixes = [
-        "マンション", "レジデンス", "ハウス", "タワー", "コート",
-        "パーク", "プラウド", "グラン", "ルネ", "ライオンズ",
-        "サーパス", "エスリード", "ワコーレ", "アドリーム",
-        "ジオ", "ブランズ", "ハイツ", "パレス", "メゾン",
-        "シャトー", "ロイヤル", "コスモ", "ダイアパレス",
-        "朝日プラザ", "藤和", "ネオ", "セレッソ",
+        "マンション",
+        "レジデンス",
+        "ハウス",
+        "タワー",
+        "コート",
+        "パーク",
+        "プラウド",
+        "グラン",
+        "ルネ",
+        "ライオンズ",
+        "サーパス",
+        "エスリード",
+        "ワコーレ",
+        "アドリーム",
+        "ジオ",
+        "ブランズ",
+        "ハイツ",
+        "パレス",
+        "メゾン",
+        "シャトー",
+        "ロイヤル",
+        "コスモ",
+        "ダイアパレス",
+        "朝日プラザ",
+        "藤和",
+        "ネオ",
+        "セレッソ",
     ]
     if any(s in title for s in name_suffixes):
         return title.strip()
@@ -842,12 +1007,16 @@ def _extract_building_name_from_title(title: str) -> str | None:
 def _strip_tags(html: str) -> str:
     """Remove HTML tags, collapse whitespace."""
     text = re.sub(
-        r"<script[^>]*>.*?</script>", " ",
-        html, flags=re.DOTALL | re.IGNORECASE,
+        r"<script[^>]*>.*?</script>",
+        " ",
+        html,
+        flags=re.DOTALL | re.IGNORECASE,
     )
     text = re.sub(
-        r"<style[^>]*>.*?</style>", " ",
-        text, flags=re.DOTALL | re.IGNORECASE,
+        r"<style[^>]*>.*?</style>",
+        " ",
+        text,
+        flags=re.DOTALL | re.IGNORECASE,
     )
     text = re.sub(r"<sup[^>]*>.*?</sup>", "", text, flags=re.DOTALL)
     text = re.sub(r"<[^>]+>", " ", text)

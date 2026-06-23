@@ -51,7 +51,7 @@ async def gather_candidates(
     *,
     sources: list[str] | None = None,
     max_pages: int = 1,
-    assume_unknown_is_hankyu: bool = True,
+    assume_unknown_is_hankyu: bool = False,
     use_browser: bool = True,
     min_rooms: int = 3,
 ) -> list[dict[str, Any]]:
@@ -132,7 +132,7 @@ async def run_tsukaguchi_alert(
     state_path: str,
     sources: list[str] | None = None,
     max_pages: int = 1,
-    assume_unknown_is_hankyu: bool = True,
+    assume_unknown_is_hankyu: bool = False,
     use_browser: bool = True,
     min_rooms: int = 3,
     dry_run: bool = False,

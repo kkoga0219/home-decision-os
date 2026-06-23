@@ -759,8 +759,8 @@ class TsukaguchiAlertRequest(BaseModel):
     )
     max_pages: int = Field(default=1, ge=1, le=5)
     assume_unknown_is_hankyu: bool = Field(
-        default=True,
-        description="路線不明の「塚口」を阪急塚口とみなすか",
+        default=False,
+        description="路線不明の「塚口」を阪急塚口とみなすか（誤検知抑制のため既定OFF）",
     )
     use_browser: bool = Field(
         default=True,

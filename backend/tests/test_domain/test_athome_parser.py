@@ -63,8 +63,32 @@ class TestParseAthomePage:
         ls = _parse_athome_page(html, "house")[0]
         assert "/kodate/" in ls["url"]
 
-    def test_access_slash_replaced_keeps_line_attached(self):
-        """kaiinAccess '阪急神戸線/塚口' must not lose its 阪急 line on split."""
+    def test_access_uses_only_bukken_access_not_kaiin(self):
+        """kaiinAccess is the SEARCH-CONTEXT station, not the property's own.
+
+        athome returns identical "kaiinAccess" across totally unrelated
+        listings (e.g. a 大庄西町 house showing "阪急塚口 徒歩3分") — using
+        it falsely qualifies far-away properties. Only bukkenAccess is real.
+        """
+        item = {
+            "bukkenNo": "9999",
+            "title": "TEST 4LDK",
+            "kakaku": "1000",
+            "madori": "4LDK",
+            "location": "尼崎市大庄西町３丁目",  # far from 塚口
+            "kaiinAccess": "阪急神戸線/塚口 徒歩3分",  # the lying field
+            "bukkenAccess": [
+                # Real access: nowhere near 塚口
+                {"name": "阪神本線 「武庫川」駅 徒歩11分"},
+            ],
+            "areaInfo": {"area": "80.0m²", "tsubo": "24.2坪"},
+        }
+        html = _make_html([item])
+        ls = _parse_athome_page(html, "house")[0]
+        assert "塚口" not in ls["access"]
+        assert "武庫川" in ls["access"]
+
+    def test_access_keeps_real_tsukaguchi_when_in_bukken_access(self):
         from app.services.tsukaguchi_filter import evaluate_access
 
         html = _make_html(SAMPLE_BUKKEN)

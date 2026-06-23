@@ -98,11 +98,29 @@ def _min(current: int | None, candidate: int) -> int:
     return candidate if current is None else min(current, candidate)
 
 
+def _segment_is_walk_only(segment: str) -> bool:
+    """True if a segment is a pure-walking access (no bus, no shuttle).
+
+    Rejects entries like "阪急神戸線 「塚口」駅 【バス】21分 城ノ堀 停歩2分"
+    where the property is NOT within walking distance of 塚口 — it's a bus
+    ride away. Such entries previously slipped through because the regex
+    only checked "徒歩N分".
+    """
+    if "バス" in segment or "ｂｕｓ" in segment.lower():
+        return False
+    if "シャトル" in segment:
+        return False
+    return True
+
+
 def parse_tsukaguchi_access(access: str) -> TsukaguchiAccess:
     """Extract the shortest walk time to 塚口 for each operator.
 
-    Only segments that mention the 塚口 station are considered; walk times
-    to other stations are ignored.
+    Only segments that:
+      - mention the 塚口 station,
+      - are a pure walking access (no bus / shuttle),
+      - contain a "徒歩N分" component,
+    are considered.
     """
     if not access:
         return TsukaguchiAccess()
@@ -114,6 +132,8 @@ def parse_tsukaguchi_access(access: str) -> TsukaguchiAccess:
     for raw in _SPLIT_RE.split(access):
         segment = (raw or "").strip()
         if not segment or _STATION not in segment:
+            continue
+        if not _segment_is_walk_only(segment):
             continue
         m = _WALK_RE.search(segment)
         if not m:
@@ -133,18 +153,17 @@ def parse_tsukaguchi_access(access: str) -> TsukaguchiAccess:
 def evaluate_access(
     access: str,
     *,
-    assume_unknown_is_hankyu: bool = True,
+    assume_unknown_is_hankyu: bool = False,
 ) -> QualificationResult:
     """Evaluate the qualification rule against an access string.
 
     Parameters
     ----------
     assume_unknown_is_hankyu :
-        Listing cards often print just "塚口駅 徒歩9分" without naming the
-        operator. In the 塚口 area such listings almost always refer to 阪急
-        塚口, and for an alert it is better to over-notify than to miss a
-        match. When True (default), an unidentified 塚口 within the 10-min
-        threshold satisfies rule (A) (flagged as 推定 in the reason).
+        OFF by default. All three portals (SUUMO / HOME'S / athome) print
+        the rail operator next to the station name, so "operator unknown"
+        in practice means the segment was garbled — assuming 阪急 there
+        only added false positives. Set True to re-enable the heuristic.
     """
     parsed = parse_tsukaguchi_access(access)
 

@@ -84,17 +84,40 @@ class TestEvaluateRuleB:
 
 
 class TestUnknownOperator:
-    def test_unknown_within_10_assumed_hankyu(self):
+    def test_unknown_off_by_default(self):
+        # operator-less segments no longer qualify by default (false-positive
+        # mitigation): real listings always carry the operator name.
         r = evaluate_access("塚口駅 徒歩9分")
+        assert not r.qualifies
+
+    def test_unknown_within_10_assumed_hankyu_when_enabled(self):
+        r = evaluate_access("塚口駅 徒歩9分", assume_unknown_is_hankyu=True)
         assert r.qualifies
         assert "推定" in r.reason
 
-    def test_unknown_disabled(self):
-        r = evaluate_access("塚口駅 徒歩9分", assume_unknown_is_hankyu=False)
-        assert not r.qualifies
+    def test_unknown_over_10_fails_even_when_enabled(self):
+        assert not evaluate_access(
+            "塚口駅 徒歩12分", assume_unknown_is_hankyu=True
+        ).qualifies
 
-    def test_unknown_over_10_fails(self):
-        assert not evaluate_access("塚口駅 徒歩12分").qualifies
+
+class TestBusSegments:
+    """Bus / shuttle access to 塚口 is NOT a walking match."""
+
+    def test_bus_to_hankyu_tsukaguchi_rejected(self):
+        # athome example: "阪急神戸線 「塚口」駅 【バス】21分 城ノ堀 停歩2分"
+        assert not evaluate_access(
+            "阪急神戸線 「塚口」駅 【バス】21分 城ノ堀 停歩2分"
+        ).qualifies
+
+    def test_bus_segment_with_other_walk_segments_still_evaluated(self):
+        # Bus to 塚口 rejected, but a separate walking line to 塚口 still wins.
+        r = evaluate_access(
+            "阪急神戸線 「塚口」駅 【バス】21分 城ノ堀 停歩2分\n"
+            "阪急神戸線 「塚口」駅 徒歩7分"
+        )
+        assert r.qualifies
+        assert "徒歩7分" in r.reason
 
 
 class TestEvaluateMisc:

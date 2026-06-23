@@ -757,10 +757,10 @@ class TsukaguchiAlertRequest(BaseModel):
         default_factory=lambda: ["suumo", "homes", "athome"],
         description="検索ソース (suumo, homes, athome)",
     )
-    max_pages: int = Field(default=1, ge=1, le=5)
+    max_pages: int = Field(default=30, ge=1, le=50)
     assume_unknown_is_hankyu: bool = Field(
-        default=True,
-        description="路線不明の「塚口」を阪急塚口とみなすか",
+        default=False,
+        description="路線不明の「塚口」を阪急塚口とみなすか（誤検知抑制のため既定OFF）",
     )
     use_browser: bool = Field(
         default=True,
@@ -806,6 +806,45 @@ async def run_tsukaguchi_alert_endpoint(body: TsukaguchiAlertRequest):
         use_browser=body.use_browser,
         min_rooms=body.min_rooms,
         dry_run=body.dry_run,
+    )
+
+
+# ===================================================================
+# My-list watcher (price / availability changes for tracked URLs)
+# ===================================================================
+
+
+class MyListRunRequest(BaseModel):
+    dry_run: bool = Field(
+        default=False,
+        description="LINE送信せずに変更検出だけ行う（スナップショットは更新）",
+    )
+
+
+@router.post("/alerts/mylist/run")
+async def run_mylist_endpoint(body: MyListRunRequest):
+    """Run the my-list watcher: fetch every URL in ``mylist.txt`` and notify
+    LINE about price / status changes since the last snapshot.
+    """
+    from app.services.mylist import MyListStore, run_mylist_check
+
+    if not body.dry_run and not settings.line_channel_token:
+        raise HTTPException(
+            503,
+            "LINE channel token not configured. Set HDOS_LINE_CHANNEL_TOKEN "
+            "(or call with dry_run=true to preview).",
+        )
+
+    store = MyListStore(
+        list_path=settings.mylist_path,
+        snapshots_path=settings.mylist_snapshots_path,
+    )
+    return await run_mylist_check(
+        store=store,
+        channel_token=settings.line_channel_token,
+        target_id=settings.line_target_id,
+        dry_run=body.dry_run,
+        proxy=settings.scrape_proxy,
     )
 
 

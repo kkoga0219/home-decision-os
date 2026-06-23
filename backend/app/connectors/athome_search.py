@@ -417,15 +417,14 @@ def _parse_bukken(
     if loc:
         info["address"] = loc
 
-    # Access: combine the representative access with every listed route so
-    # the walk-distance filter can see all stations (incl. both 塚口 lines).
-    # athome's kaiinAccess uses a "路線名/駅名 徒歩N分" form — replace the
-    # internal slash with a space so the line stays attached to the station,
-    # and join entries with newlines (the filter splits on those).
+    # Access: use ONLY bukkenAccess (the property's true station list).
+    #
+    # ⚠️ Do NOT use `kaiinAccess`. Despite the name, that field is NOT the
+    # property's nearest station — it reflects the search-context station
+    # (whatever the user/page was filtering by) and is identical across
+    # totally unrelated listings. Trusting it caused properties in 大庄西町
+    # (near 武庫川駅) and 下坂部 (near 尼崎駅) to be tagged "阪急塚口 徒歩3分".
     access_parts: list[str] = []
-    kaiin = (item.get("kaiinAccess") or "").strip()
-    if kaiin:
-        access_parts.append(kaiin.replace("/", " "))
     for acc in item.get("bukkenAccess") or []:
         name = (acc.get("name") if isinstance(acc, dict) else "") or ""
         name = name.strip()

@@ -758,6 +758,53 @@ def _build_suumo_qs(
 # ---------------------------------------------------------------------------
 
 
+async def fetch_suumo_full_access(
+    client: httpx.AsyncClient,
+    url: str,
+) -> str | None:
+    """Fetch a SUUMO detail page and return its 全アクセス string.
+
+    The list-page card only shows one rep station, so listings around 塚口
+    can appear with e.g. "猪名寺 徒歩11分" only — hiding the 阪急塚口 徒歩14分
+    that's also listed on the detail page. We follow the URL to recover the
+    full "交通" row so the qualification filter sees every station.
+    """
+    if not url:
+        return None
+    try:
+        resp = await client.get(
+            url,
+            headers={**HEADERS, "Referer": "https://suumo.jp/"},
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.info("SUUMO detail fetch failed (%s): %s", url, exc)
+        return None
+    if resp.status_code != 200:
+        return None
+
+    html = resp.text
+    # The 交通 row: <th>交通</th><td>...徒歩N分...</td>
+    # Pre-cleaning: <strong> "乗り換え案内" boilerplate / <br> separators.
+    for m in re.finditer(r"交通", html):
+        ctx = html[m.start() : m.start() + 4000]
+        # Replace BRs with newlines so the filter splits stations.
+        ctx2 = re.sub(r"<br\s*/?>", "\n", ctx, flags=re.IGNORECASE)
+        text = re.sub(r"<script.*?</script>", " ", ctx2, flags=re.DOTALL)
+        text = re.sub(r"<style.*?</style>", " ", text, flags=re.DOTALL)
+        text = re.sub(r"<[^>]+>", " ", text)
+        text = re.sub(r"&nbsp;", " ", text)
+        # Drop the "乗り換え案内" boilerplate link text.
+        text = re.sub(r"\[\s*乗り換え案内\s*\]", " ", text)
+        text = re.sub(r"[ \t]+", " ", text)
+        # Keep lines that contain "徒歩" (real walking access only).
+        lines = [ln.strip() for ln in text.split("\n") if "徒歩" in ln or "歩" in ln]
+        # Take the contiguous block right after "交通".
+        joined = "\n".join(lines[:8])
+        if joined and ("徒歩" in joined or "歩" in joined):
+            return joined
+    return None
+
+
 def _looks_like_challenge(html: str) -> bool:
     """Heuristic: True if the page lacks SUUMO listing markup.
 
@@ -811,15 +858,20 @@ def _parse_property_unit(chunk: str) -> dict[str, Any] | None:
     info: dict[str, Any] = {"parse_method": "structured"}
 
     # --- Detail page URL ---
+    # SUUMO uses different path prefixes by property type:
+    #   /ms/chuko/...          → 中古マンション
+    #   /chukoikkodate/...     → 中古戸建て
+    #   /chumosi/...            → 中古一戸建 (older listings)
     m = re.search(
-        r'href="(/ms/chuko/[^"]*nc_\d+/[^"]*)"',
+        r'href="(/(?:ms/chuko|chukoikkodate|chumosi)/[^"]*nc_\d+/[^"]*)"',
         chunk,
     )
     if m:
         info["url"] = f"https://suumo.jp{m.group(1)}"
     else:
         m2 = re.search(
-            r'href="(https?://suumo\.jp/ms/chuko/[^"]*nc_\d+/[^"]*)"',
+            r'href="(https?://suumo\.jp/(?:ms/chuko|chukoikkodate|chumosi)'
+            r'/[^"]*nc_\d+/[^"]*)"',
             chunk,
         )
         if m2:

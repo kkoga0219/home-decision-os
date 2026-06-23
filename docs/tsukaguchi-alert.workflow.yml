@@ -13,8 +13,9 @@ name: 塚口 新着物件アラート
 
 on:
   schedule:
-    # 3時間ごと（UTC）。JST では 0,3,6,9... 時に相当。
-    - cron: "0 */3 * * *"
+    # 毎日 JST 09:01 と 22:01 に実行 (UTC 00:01 / 13:01)。
+    - cron: "1 0 * * *"
+    - cron: "1 13 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -37,6 +38,8 @@ jobs:
       HDOS_LINE_TARGET_ID: ${{ secrets.HDOS_LINE_TARGET_ID }}
       HDOS_ALERT_STATE_PATH: .alert_state/tsukaguchi_seen.json
       HDOS_ALERT_MIN_ROOMS: "3"
+      HDOS_MYLIST_PATH: ../mylist.txt
+      HDOS_MYLIST_SNAPSHOTS_PATH: .alert_state/mylist_snapshots.json
       # Optional: set a residential proxy secret if athome/SUUMO block the
       # GitHub Actions datacenter IP. Leave the secret unset for direct.
       HDOS_SCRAPE_PROXY: ${{ secrets.HDOS_SCRAPE_PROXY }}
@@ -67,7 +70,7 @@ jobs:
           restore-keys: |
             tsukaguchi-alert-state-
 
-      - name: Run alert
+      - name: Run alert (new listings + mylist diff)
         run: |
-          python scripts/run_tsukaguchi_alert.py \
+          python scripts/run_tsukaguchi_alert.py --mode both \
             ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '--dry-run' || '' }}

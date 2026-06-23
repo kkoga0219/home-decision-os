@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     # Minimum number of rooms for the alert (3 → 3LDK 以上).
     alert_min_rooms: int = 3
 
+    # My-list watcher: file (committed) of URLs to track for price /
+    # availability changes, and where to persist their snapshots.
+    mylist_path: str = "mylist.txt"
+    mylist_snapshots_path: str = ".alert_state/mylist_snapshots.json"
+
     # Optional HTTP(S) proxy for scraping. Anti-bot systems (esp. athome's
     # Imperva gate) often block datacenter IPs such as GitHub Actions
     # runners; routing through a residential proxy avoids that. Applied to

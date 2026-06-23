@@ -104,7 +104,7 @@ Interactive API docs available at `http://localhost:8000/docs` (Swagger UI).
    | `HDOS_ALERT_USE_BROWSER` | ブラウザ取得の ON/OFF（既定 true） |
    | `HDOS_SCRAPE_PROXY` | 任意。アンチボット回避用プロキシ（後述） |
 
-3. 定期実行は GitHub Actions ワークフローで行います（3時間ごと / 手動実行可）。
+3. 定期実行は GitHub Actions ワークフローで行います（**毎日 JST 09:01 と 22:01** / 手動実行可）。
    `docs/tsukaguchi-alert.workflow.yml` を `.github/workflows/tsukaguchi-alert.yml`
    にコピーして有効化してください
    （自動コミットでは `workflows` 権限の都合で `.github/workflows` 配下に
@@ -136,14 +136,37 @@ Interactive API docs available at `http://localhost:8000/docs` (Swagger UI).
 > SUUMO/HOME'S カードでは判定しきれない場合があります（athome は全路線を持つため
 > 判定可能）。
 
+### マイリスト（気になる物件の追跡）
+
+リポジトリ直下の **`mylist.txt`** に気になる物件のURLを1行ずつ書くと、
+定期実行のたびに各URLの詳細ページを取得して前回スナップショットと比較し、
+**価格変更・成約済み・掲載終了・間取り変更**を検知して LINE に通知します。
+
+```
+# 塚口エリア マイリスト
+https://suumo.jp/ms/chuko/hyogo/sc_amagasaki/nc_21035306/
+https://suumo.jp/chukoikkodate/hyogo/sc_amagasaki/nc_20587578/
+```
+
+- `#` で始まる行・空行は無視
+- GitHub の Web 上で `mylist.txt` を編集してコミットすればOK
+- 対応サイト: SUUMO（マンション＋戸建て）/ athome（価格・住所・間取り）
+  / HOME'S（掲載終了のみ）
+- 初回スナップショットは静かに取られ、2回目以降の差分のみ通知されます
+- マイリストに入れない物件は通常通り「新着通知の既読リスト」で重複排除されます
+
 ### 手動実行 / 動作確認
 
 ```bash
 cd backend
-# 送信せず対象物件だけ確認（既読状態は更新されます）
+# 新着検索 + マイリスト追跡（既定）。LINE送信せず判定だけ
 python scripts/run_tsukaguchi_alert.py --dry-run
 # 実際に LINE 通知
 python scripts/run_tsukaguchi_alert.py
+# マイリスト追跡のみ
+python scripts/run_tsukaguchi_alert.py --mode mylist
+# 新着検索のみ
+python scripts/run_tsukaguchi_alert.py --mode new
 ```
 
 ## DB Schema

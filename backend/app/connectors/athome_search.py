@@ -14,6 +14,7 @@ HTML structure (confirmed 2026-03):
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 from typing import Any
@@ -70,13 +71,20 @@ _CITY_SLUGS: dict[str, tuple[str, str]] = {
 
 # Prefecture slugs for athome
 _PREF_SLUGS: dict[str, str] = {
-    "北海道": "hokkaido", "宮城県": "miyagi",
-    "東京都": "tokyo", "神奈川県": "kanagawa",
-    "埼玉県": "saitama", "千葉県": "chiba",
-    "愛知県": "aichi", "大阪府": "osaka",
-    "京都府": "kyoto", "兵庫県": "hyogo",
-    "福岡県": "fukuoka", "広島県": "hiroshima",
-    "奈良県": "nara", "滋賀県": "shiga",
+    "北海道": "hokkaido",
+    "宮城県": "miyagi",
+    "東京都": "tokyo",
+    "神奈川県": "kanagawa",
+    "埼玉県": "saitama",
+    "千葉県": "chiba",
+    "愛知県": "aichi",
+    "大阪府": "osaka",
+    "京都府": "kyoto",
+    "兵庫県": "hyogo",
+    "福岡県": "fukuoka",
+    "広島県": "hiroshima",
+    "奈良県": "nara",
+    "滋賀県": "shiga",
 }
 
 
@@ -120,12 +128,22 @@ class AthomeSearchConnector(BaseConnector):
         all_listings: list[dict[str, Any]] = []
         errors: list[str] = []
 
+        from app.config import settings
+
         try:
             async with httpx.AsyncClient(
                 timeout=25,
                 follow_redirects=True,
                 http2=False,
+                headers=HEADERS,
+                proxy=settings.scrape_proxy or None,
             ) as client:
+                # Warm-up: athome is behind Imperva bot protection
+                # ("認証中" block page). Hitting the top page first sets the
+                # `athome_lab` cookie on the shared client, which lets the
+                # subsequent list request through over plain HTTP.
+                await self._warm_up(client, errors)
+
                 for page in range(1, max_pages + 1):
                     if page == 1:
                         url = base_url
@@ -138,12 +156,16 @@ class AthomeSearchConnector(BaseConnector):
                         await asyncio.sleep(1.0)
 
                     html = await self._get_page_html(
-                        client, url, page, errors, use_browser,
+                        client,
+                        url,
+                        page,
+                        errors,
+                        use_browser,
                     )
                     if html is None:
                         break
 
-                    listings = _parse_athome_page(html)
+                    listings = _parse_athome_page(html, property_type)
                     if not listings:
                         break
                     all_listings.extend(listings)
@@ -168,6 +190,21 @@ class AthomeSearchConnector(BaseConnector):
         )
 
     @staticmethod
+    async def _warm_up(
+        client: httpx.AsyncClient,
+        errors: list[str],
+    ) -> None:
+        """Acquire athome's anti-bot cookie via the top page."""
+        try:
+            await client.get(
+                "https://www.athome.co.jp/",
+                headers={"Referer": "https://www.google.com/"},
+            )
+            await asyncio.sleep(1.0)
+        except Exception as exc:  # noqa: BLE001 - non-fatal warm-up
+            logger.info("athome warm-up failed (continuing): %s", exc)
+
+    @staticmethod
     async def _get_page_html(
         client: httpx.AsyncClient,
         url: str,
@@ -182,16 +219,22 @@ class AthomeSearchConnector(BaseConnector):
         headless browser (Playwright). Degrades to a no-op without Playwright.
         """
         html = await AthomeSearchConnector._fetch_page_with_retry(
-            client, url, page, errors,
+            client,
+            url,
+            page,
+            errors,
         )
 
-        if use_browser and (html is None or "card-box" not in html):
+        if use_browser and (html is None or "bukkenList" not in html):
+            from app.config import settings
             from app.connectors import browser_fetch
 
             rendered = await browser_fetch.fetch_html(
-                url, wait_selector=".card-box",
+                url,
+                wait_for_text="bukkenList",
+                proxy=settings.scrape_proxy,
             )
-            if rendered and "card-box" in rendered:
+            if rendered and "bukkenList" in rendered:
                 return rendered
 
         return html
@@ -207,7 +250,9 @@ class AthomeSearchConnector(BaseConnector):
         for attempt in range(_MAX_RETRIES):
             logger.info(
                 "Fetching athome page %d (attempt %d): %s",
-                page, attempt + 1, url,
+                page,
+                attempt + 1,
+                url,
             )
             headers = {**HEADERS, "Referer": "https://www.athome.co.jp/"}
             resp = await client.get(url, headers=headers)
@@ -218,28 +263,26 @@ class AthomeSearchConnector(BaseConnector):
             if resp.status_code in (202, 429, 503):
                 logger.warning(
                     "athome page %d: HTTP %d, retrying in %.1fs",
-                    page, resp.status_code, _RETRY_DELAY,
+                    page,
+                    resp.status_code,
+                    _RETRY_DELAY,
                 )
                 await asyncio.sleep(_RETRY_DELAY)
                 continue
 
-            errors.append(
-                f"athome page {page}: HTTP {resp.status_code}"
-            )
+            errors.append(f"athome page {page}: HTTP {resp.status_code}")
             return None
 
         # All retries exhausted — try to parse last response anyway
         if resp.status_code in (200, 202):
             logger.info(
                 "athome page %d: using response despite HTTP %d",
-                page, resp.status_code,
+                page,
+                resp.status_code,
             )
             return resp.text
 
-        errors.append(
-            f"athome page {page}: HTTP {resp.status_code} after "
-            f"{_MAX_RETRIES} retries"
-        )
+        errors.append(f"athome page {page}: HTTP {resp.status_code} after {_MAX_RETRIES} retries")
         return None
 
     @staticmethod
@@ -262,176 +305,145 @@ class AthomeSearchConnector(BaseConnector):
         pref_slug = _PREF_SLUGS.get(prefecture, "")
         keyword = station_name or city_name
         if pref_slug and keyword:
-            return (
-                f"{base}/{pref_slug}/list/"
-                f"?keyword={quote(keyword)}"
-            )
+            return f"{base}/{pref_slug}/list/?keyword={quote(keyword)}"
         if pref_slug:
             return f"{base}/{pref_slug}/list/"
         if keyword:
-            return (
-                f"{base}/list/"
-                f"?keyword={quote(keyword)}"
-            )
+            return f"{base}/list/?keyword={quote(keyword)}"
         return None
 
 
 # -------------------------------------------------------------------
-# HTML parsing
+# Parsing
+#
+# athome is an Angular app: the listing data is server-rendered into an
+# Angular TransferState <script type="application/json"> blob rather than
+# into plain listing-card markup. We parse that JSON (works over plain HTTP,
+# no browser needed). The relevant array lives at:
+#     data.bukkenData.bukkenList[]
+# with fields: bukkenNo, title, kakaku (万円), madori (間取り), location,
+# kaiinAccess, bukkenAccess[].name, areaInfo.area, syumokuNm.
 # -------------------------------------------------------------------
 
-def _parse_athome_page(html: str) -> list[dict[str, Any]]:
-    """Parse athome listing page."""
+_ZEN_TO_HAN = str.maketrans(
+    "０１２３４５６７８９ＬＤＫＳＲ",
+    "0123456789LDKSR",
+)
+
+
+def _zen_to_han(text: str) -> str:
+    return (text or "").translate(_ZEN_TO_HAN)
+
+
+def _parse_athome_page(
+    html: str,
+    property_type: str = "mansion",
+) -> list[dict[str, Any]]:
+    """Parse an athome listing page from its TransferState JSON."""
+    bukken_list = _extract_bukken_list(html)
     listings: list[dict[str, Any]] = []
-
-    # Split by card-box boundaries
-    chunks = re.split(
-        r'<div\s+class="card-box(?:\s|")', html,
-    )
-
-    for chunk in chunks[1:]:
-        listing = _parse_athome_card(chunk)
-        if listing:
-            listings.append(listing)
-
+    for item in bukken_list:
+        parsed = _parse_bukken(item, property_type)
+        if parsed:
+            listings.append(parsed)
     return listings
 
 
-def _parse_athome_card(chunk: str) -> dict[str, Any] | None:
-    """Parse a single athome listing card."""
+def _extract_bukken_list(html: str) -> list[dict[str, Any]]:
+    """Pull data.bukkenData.bukkenList out of the TransferState blob(s)."""
+    for block in re.findall(
+        r'<script[^>]*type="application/json"[^>]*>(.*?)</script>',
+        html,
+        re.DOTALL,
+    ):
+        try:
+            state = json.loads(block)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(state, dict):
+            continue
+        for entry in state.values():
+            body = entry.get("body") if isinstance(entry, dict) else None
+            if not isinstance(body, str) or "bukkenList" not in body:
+                continue
+            try:
+                inner = json.loads(body)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            bl = inner.get("data", {}).get("bukkenData", {}).get("bukkenList")
+            if isinstance(bl, list) and bl:
+                return bl
+    return []
+
+
+def _parse_bukken(
+    item: dict[str, Any],
+    property_type: str,
+) -> dict[str, Any] | None:
+    """Map one bukkenList entry to the connector's listing dict."""
     info: dict[str, Any] = {
         "source": "athome",
-        "parse_method": "structured",
+        "parse_method": "json",
     }
 
-    # Building name: .title-wrap__title-text
-    m = re.search(
-        r'class="title-wrap__title-text"[^>]*>(.*?)</div>',
-        chunk,
-        re.DOTALL,
-    )
-    if m:
-        name = _strip_tags(m.group(1)).strip()
-        if name:
-            info["name"] = name
+    title = (item.get("title") or "").strip()
+    if title:
+        info["name"] = title
 
-    # Price: span.property-price
-    m = re.search(
-        r'class="property-price"[^>]*>([\d,.]+)\s*万円',
-        chunk,
-    )
-    if m:
+    # Detail URL from the property number.
+    bukken_no = str(item.get("bukkenNo") or "").strip()
+    if bukken_no:
+        kind = "kodate" if property_type == "house" else "mansion"
+        info["url"] = f"https://www.athome.co.jp/{kind}/{bukken_no}/"
+
+    # Price: kakaku is in 万円 (e.g. "300", "2,980"); may be "応談" etc.
+    kakaku = str(item.get("kakaku") or "")
+    pm = re.search(r"([\d,]+)", kakaku)
+    if pm:
         try:
-            info["price_jpy"] = (
-                int(m.group(1).replace(",", "")) * 10_000
-            )
-            info["price_text"] = f"{m.group(1)}万円"
+            man = int(pm.group(1).replace(",", ""))
+            info["price_jpy"] = man * 10_000
+            info["price_text"] = f"{man:,}万円"
         except ValueError:
             pass
 
-    # Detail URL: a[href*="/mansion/"]
-    m = re.search(
-        r'href="((?:https?://www\.athome\.co\.jp)?'
-        r'/mansion/\d+/?)"',
-        chunk,
-    )
-    if m:
-        url = m.group(1)
-        if not url.startswith("http"):
-            url = f"https://www.athome.co.jp{url}"
-        info["url"] = url
+    # Layout (間取り), normalised from full-width.
+    madori = _zen_to_han(item.get("madori") or "").strip()
+    if madori:
+        info["layout"] = madori
 
-    # Parse property-detail-table__block fields
-    fields = _extract_detail_blocks(chunk)
+    # Address.
+    loc = (item.get("location") or "").strip()
+    if loc:
+        info["address"] = loc
 
-    # 交通
-    access = fields.get("交通", "")
-    if access:
-        info["access"] = access
-        sm = re.search(r"「([^」]+)」\s*駅", access)
-        if sm:
-            info["station_name"] = sm.group(1)
-        else:
-            sm = re.search(r"(\S+)駅", access)
-            if sm:
-                info["station_name"] = sm.group(1)
-        sm = re.search(r"徒歩(\d+)分", access)
-        if sm:
-            info["walking_minutes"] = int(sm.group(1))
-        sm = re.search(r"^(\S+線)\s", access)
-        if sm:
-            info["line_name"] = sm.group(1)
+    # Access: combine the representative access with every listed route so
+    # the walk-distance filter can see all stations (incl. both 塚口 lines).
+    # athome's kaiinAccess uses a "路線名/駅名 徒歩N分" form — replace the
+    # internal slash with a space so the line stays attached to the station,
+    # and join entries with newlines (the filter splits on those).
+    access_parts: list[str] = []
+    kaiin = (item.get("kaiinAccess") or "").strip()
+    if kaiin:
+        access_parts.append(kaiin.replace("/", " "))
+    for acc in item.get("bukkenAccess") or []:
+        name = (acc.get("name") if isinstance(acc, dict) else "") or ""
+        name = name.strip()
+        if name:
+            access_parts.append(name.replace("/", " "))
+    if access_parts:
+        info["access"] = "\n".join(access_parts)
+        wm = re.search(r"徒歩(\d+)分", info["access"])
+        if wm:
+            info["walking_minutes"] = int(wm.group(1))
 
-    # 所在地
-    addr = fields.get("所在地", "")
-    if addr:
-        info["address"] = addr
-
-    # 間取り
-    layout = fields.get("間取り", "")
-    if layout:
-        lm = re.search(r"(\d[LDKSR０-９]{1,4})", layout)
-        if lm:
-            info["layout"] = (
-                lm.group(1)
-                .replace("０", "0").replace("１", "1")
-                .replace("２", "2").replace("３", "3")
-                .replace("４", "4").replace("５", "5")
-                .replace("Ｌ", "L").replace("Ｄ", "D")
-                .replace("Ｋ", "K").replace("Ｓ", "S")
-                .replace("Ｒ", "R")
-            )
-
-    # 専有面積
-    area = fields.get("専有面積", "")
-    if area:
-        am = re.search(r"([\d.]+)\s*m", area)
+    # Floor area.
+    area_info = item.get("areaInfo")
+    if isinstance(area_info, dict):
+        am = re.search(r"([\d.]+)\s*m", area_info.get("area", ""))
         if am:
             info["floor_area_sqm"] = float(am.group(1))
-
-    # 築年月
-    built = fields.get("築年月", "")
-    if built:
-        info["built_date"] = built
-        bm = re.search(r"(\d{4})年", built)
-        if bm:
-            info["built_year"] = int(bm.group(1))
-        # 築N年 pattern
-        bm = re.search(r"築(\d+)年", built)
-        if bm and "built_year" not in info:
-            from datetime import date
-            info["age_years"] = int(bm.group(1))
 
     if "price_jpy" in info or "name" in info:
         return info
     return None
-
-
-def _extract_detail_blocks(html: str) -> dict[str, str]:
-    """Extract label-value pairs from athome detail blocks.
-
-    Structure: .property-detail-table__block > strong + span
-    """
-    fields: dict[str, str] = {}
-
-    for m in re.finditer(
-        r'class="property-detail-table__block[^"]*"[^>]*>'
-        r'.*?<strong[^>]*>(.*?)</strong>'
-        r'.*?<span[^>]*>(.*?)</span>',
-        html,
-        re.DOTALL,
-    ):
-        label = _strip_tags(m.group(1)).strip()
-        value = _strip_tags(m.group(2)).strip()
-        if label and value and label not in fields:
-            fields[label] = value
-
-    return fields
-
-
-def _strip_tags(html: str) -> str:
-    """Remove HTML tags."""
-    text = re.sub(r"<[^>]+>", " ", html)
-    text = re.sub(r"&nbsp;", " ", text)
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()

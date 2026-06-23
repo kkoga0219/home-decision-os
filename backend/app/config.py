@@ -33,6 +33,15 @@ class Settings(BaseSettings):
     # installed. Disable with HDOS_ALERT_USE_BROWSER=false.
     alert_use_browser: bool = True
 
+    # Minimum number of rooms for the alert (3 → 3LDK 以上).
+    alert_min_rooms: int = 3
+
+    # Optional HTTP(S) proxy for scraping. Anti-bot systems (esp. athome's
+    # Imperva gate) often block datacenter IPs such as GitHub Actions
+    # runners; routing through a residential proxy avoids that. Applied to
+    # both httpx and the Playwright browser. Empty = direct connection.
+    scrape_proxy: str = ""  # e.g. http://user:pass@host:port
+
     model_config = {"env_prefix": "HDOS_"}
 
 

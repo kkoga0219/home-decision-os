@@ -25,7 +25,7 @@ from app.connectors.homes_search import HomesSearchConnector
 from app.connectors.line_notify import LineNotifyConnector
 from app.connectors.suumo_search import SuumoSearchConnector
 from app.services.alert_state import AlertState, listing_key
-from app.services.tsukaguchi_filter import evaluate_access
+from app.services.tsukaguchi_filter import evaluate_access, layout_meets_minimum
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,7 @@ async def gather_candidates(
     max_pages: int = 1,
     assume_unknown_is_hankyu: bool = True,
     use_browser: bool = True,
+    min_rooms: int = 3,
 ) -> list[dict[str, Any]]:
     """Search all sources/types and return qualifying listings.
 
@@ -62,7 +63,7 @@ async def gather_candidates(
 
     ``use_browser`` enables the Playwright fallback for SUUMO / athome (see
     ``browser_fetch``); it is ignored gracefully if Playwright is not
-    installed.
+    installed. ``min_rooms`` filters by layout (3 → 3LDK 以上).
     """
     srcs = [s.lower() for s in (sources or ["suumo", "homes", "athome"])]
 
@@ -102,6 +103,8 @@ async def gather_candidates(
             )
             if not verdict.qualifies:
                 continue
+            if not layout_meets_minimum(listing.get("layout", ""), min_rooms):
+                continue
             listing.setdefault("source", _source_of(result))
             listing["property_type"] = ptype
             listing["property_type_label"] = _TYPE_LABEL[ptype]
@@ -131,6 +134,7 @@ async def run_tsukaguchi_alert(
     max_pages: int = 1,
     assume_unknown_is_hankyu: bool = True,
     use_browser: bool = True,
+    min_rooms: int = 3,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Run the full alert pipeline and (optionally) push to LINE.
@@ -142,6 +146,7 @@ async def run_tsukaguchi_alert(
         max_pages=max_pages,
         assume_unknown_is_hankyu=assume_unknown_is_hankyu,
         use_browser=use_browser,
+        min_rooms=min_rooms,
     )
 
     state = AlertState.load(state_path)

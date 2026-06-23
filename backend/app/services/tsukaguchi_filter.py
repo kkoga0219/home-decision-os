@@ -48,6 +48,37 @@ class QualificationResult:
     access: TsukaguchiAccess
 
 
+_LAYOUT_ROOMS_RE = re.compile(r"(\d+)")
+
+
+def layout_room_count(layout: str) -> int | None:
+    """Number of rooms from a layout string (e.g. '3LDK' → 3).
+
+    Recognises single-room layouts written without a leading digit
+    (ワンルーム / studio → 1). Returns None only when truly unparseable.
+    """
+    if not layout:
+        return None
+    s = layout.strip()
+    if "ワンルーム" in s or "ステュディオ" in s or "ストゥディオ" in s:
+        return 1
+    m = _LAYOUT_ROOMS_RE.match(s)
+    return int(m.group(1)) if m else None
+
+
+def layout_meets_minimum(layout: str, min_rooms: int = 3) -> bool:
+    """True if the layout has at least ``min_rooms`` rooms.
+
+    Unknown / unparseable layouts pass (better to over-notify than to drop a
+    good property whose layout simply did not parse). Used to honour the
+    "3LDK以上" requirement.
+    """
+    rooms = layout_room_count(layout)
+    if rooms is None:
+        return True
+    return rooms >= min_rooms
+
+
 def _classify_operator(segment: str) -> str:
     """Classify a 塚口 access segment as 'hankyu', 'jr' or 'unknown'."""
     if "阪急" in segment or "ハンキュウ" in segment:

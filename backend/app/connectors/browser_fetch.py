@@ -52,9 +52,11 @@ async def fetch_html(
     url: str,
     *,
     wait_selector: str | None = None,
+    wait_for_text: str | None = None,
     wait_ms: int = 1500,
     timeout_ms: int = 30000,
     user_agent: str = _DEFAULT_UA,
+    proxy: str = "",
 ) -> str | None:
     """Render ``url`` in headless Chromium and return the HTML.
 
@@ -65,8 +67,15 @@ async def fetch_html(
     ----------
     wait_selector :
         If given, wait for this CSS selector to appear before reading content.
+    wait_for_text :
+        If given, poll the page content until this substring appears (used to
+        wait out JS anti-bot challenges that reload into the real page, e.g.
+        athome's Imperva "認証中" gate → wait for "bukkenList").
     wait_ms :
-        Extra settle time after load / selector (lazy content).
+        Extra settle time after load (lazy content).
+    proxy :
+        Optional proxy URL (e.g. residential proxy) to bypass datacenter-IP
+        blocks.
     """
     global _unavailable_logged
 
@@ -82,16 +91,20 @@ async def fetch_html(
             _unavailable_logged = True
         return None
 
+    launch_kwargs: dict = {
+        "headless": True,
+        "args": [
+            "--no-sandbox",
+            "--disable-blink-features=AutomationControlled",
+            "--disable-dev-shm-usage",
+        ],
+    }
+    if proxy:
+        launch_kwargs["proxy"] = {"server": proxy}
+
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-blink-features=AutomationControlled",
-                    "--disable-dev-shm-usage",
-                ],
-            )
+            browser = await p.chromium.launch(**launch_kwargs)
             try:
                 context = await browser.new_context(
                     user_agent=user_agent,
@@ -108,8 +121,9 @@ async def fetch_html(
                     try:
                         await page.wait_for_selector(wait_selector, timeout=timeout_ms)
                     except Exception:
-                        # Selector never appeared; still return what we have.
                         pass
+                if wait_for_text:
+                    await _poll_for_text(page, wait_for_text, timeout_ms)
                 if wait_ms:
                     await page.wait_for_timeout(wait_ms)
                 return await page.content()
@@ -118,3 +132,17 @@ async def fetch_html(
     except Exception as exc:  # noqa: BLE001 - degrade gracefully
         logger.warning("Browser fetch failed for %s: %s", url, exc)
         return None
+
+
+async def _poll_for_text(page, text: str, timeout_ms: int) -> None:
+    """Poll page content until ``text`` appears (anti-bot reload), best-effort."""
+    import time
+
+    deadline = time.monotonic() + timeout_ms / 1000
+    while time.monotonic() < deadline:
+        try:
+            if text in await page.content():
+                return
+        except Exception:
+            pass
+        await page.wait_for_timeout(1000)

@@ -77,14 +77,17 @@ Interactive API docs available at `http://localhost:8000/docs` (Swagger UI).
 
 ### 通知条件
 
-物件が次の **いずれか** を満たすと通知対象になります（`tsukaguchi_filter.py`）:
+物件が次の条件を **すべて** 満たすと通知対象になります:
 
-- **阪急塚口** 徒歩 **10分以内**、または
-- **阪急塚口・JR塚口 の両方** が徒歩 **15分以内**
+1. **徒歩条件**（`tsukaguchi_filter.py`）— 次のいずれか:
+   - **阪急塚口** 徒歩 **10分以内**、または
+   - **阪急塚口・JR塚口 の両方** が徒歩 **15分以内**
+2. **間取り**: **3LDK 以上**（部屋数3以上。`HDOS_ALERT_MIN_ROOMS` / `--min-rooms` で変更可）
 
-> SUUMO / HOME'S / athome の検索カードは最寄り路線しか表示しないことが多いため、
+> SUUMO / HOME'S の検索カードは最寄り路線しか表示しないことが多いため、
 > 路線名が不明な「塚口」徒歩10分以内は阪急塚口とみなして通知します
 > （取りこぼし回避。`assume_unknown_is_hankyu=false` で無効化可）。
+> athome は各物件の全路線アクセスを取得するため、ルール (B) も判定できます。
 
 ### セットアップ
 
@@ -97,6 +100,9 @@ Interactive API docs available at `http://localhost:8000/docs` (Swagger UI).
    | `HDOS_LINE_CHANNEL_TOKEN` | チャネルアクセストークン（必須） |
    | `HDOS_LINE_TARGET_ID` | 通知先 userId/groupId/roomId（空ならブロードキャスト） |
    | `HDOS_ALERT_STATE_PATH` | 既読リストの保存先（既定: `.alert_state/tsukaguchi_seen.json`） |
+   | `HDOS_ALERT_MIN_ROOMS` | 最低部屋数（既定 3 = 3LDK以上） |
+   | `HDOS_ALERT_USE_BROWSER` | ブラウザ取得の ON/OFF（既定 true） |
+   | `HDOS_SCRAPE_PROXY` | 任意。アンチボット回避用プロキシ（後述） |
 
 3. 定期実行は GitHub Actions ワークフローで行います（3時間ごと / 手動実行可）。
    `docs/tsukaguchi-alert.workflow.yml` を `.github/workflows/tsukaguchi-alert.yml`
@@ -107,18 +113,28 @@ Interactive API docs available at `http://localhost:8000/docs` (Swagger UI).
 
 ### データ取得について
 
-- **SUUMO / HOME'S** は通常の HTTP 取得（httpx）でライブ動作を確認済みです
+- **SUUMO / HOME'S** — 通常の HTTP 取得（httpx）でライブ動作を確認済み
   （尼崎市の中古マンション/戸建て一覧 → 塚口徒歩条件でフィルタ）。
-- **athome** は価格などをクライアント側 JS で描画するため、`use_browser` 有効時は
-  ヘッドレスブラウザ（Playwright）で取得します。
-- `use_browser`（既定 ON）は **HTTP を先に試し、応答が空/チャレンジページの場合だけ**
-  ブラウザにフォールバックします。Playwright 未導入時は自動的に無効化されます
-  （`HDOS_ALERT_USE_BROWSER=false` または `--no-browser` で完全に無効化）。
+- **athome** — Angular アプリで、物件データは SSR の TransferState JSON
+  （`data.bukkenData.bukkenList`）として埋め込まれています。これを解析するため
+  httpx だけで取得できます。athome はアクセス全路線を持つので、複数路線の判定にも
+  対応します。なお athome は Imperva 系のボット保護（「認証中」ページ）があるため、
+  **トップページを先に叩いて認証 Cookie を取得**してから一覧を取得します。
+- `use_browser`（既定 ON）は **HTTP を先に試し、応答が空/ボット保護ページの場合だけ**
+  ヘッドレスブラウザ（Playwright）で再取得します（JS チャレンジを通過）。
+  Playwright 未導入時は自動的に無効化されます
+  （`HDOS_ALERT_USE_BROWSER=false` / `--no-browser` で無効化）。
 
-> **補足:** SUUMO の検索カードは最寄り1路線しか表示しないため、ルール (B)
-> 「阪急・JR 両塚口とも徒歩15分」はカード情報だけでは判定しきれない場合があります
-> （多くは阪急が最寄り表示のためルール (A) で拾えます）。物件詳細ページの全路線
-> パースによる精緻化は今後の改善余地です。
+> **アンチボットと IP について（重要）:** SUUMO / athome はデータセンター IP
+> （GitHub Actions の Azure IP 等）を弾くことがあります。Cookie ウォームアップと
+> ブラウザフォールバックで多くは通過できますが、IP のレピュテーション次第で
+> ブロックされる場合があります。確実性が必要なら次のいずれかを推奨します:
+> 1. `HDOS_SCRAPE_PROXY=http://user:pass@host:port` に **住宅用プロキシ**を設定
+> 2. ワークフローではなく **自宅などの回線（住宅 IP）で cron 実行**
+>
+> ルール (B)「阪急・JR 両塚口とも徒歩15分」は、最寄り1路線しか出さない
+> SUUMO/HOME'S カードでは判定しきれない場合があります（athome は全路線を持つため
+> 判定可能）。
 
 ### 手動実行 / 動作確認
 

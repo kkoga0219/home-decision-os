@@ -766,6 +766,11 @@ class TsukaguchiAlertRequest(BaseModel):
         default=True,
         description="Playwrightヘッドレスブラウザで取得（アンチボット回避）",
     )
+    min_rooms: int = Field(
+        default=3,
+        ge=1,
+        description="最低部屋数（3 → 3LDK以上）",
+    )
     dry_run: bool = Field(
         default=False,
         description="LINE送信せず判定結果のみ返す（既読状態は更新）",
@@ -799,6 +804,7 @@ async def run_tsukaguchi_alert_endpoint(body: TsukaguchiAlertRequest):
         max_pages=body.max_pages,
         assume_unknown_is_hankyu=body.assume_unknown_is_hankyu,
         use_browser=body.use_browser,
+        min_rooms=body.min_rooms,
         dry_run=body.dry_run,
     )
 

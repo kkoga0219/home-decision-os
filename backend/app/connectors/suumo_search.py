@@ -54,23 +54,52 @@ _RETRY_DELAY = 2.0  # seconds
 # Prefecture → SUUMO URL slug
 # ---------------------------------------------------------------------------
 PREFECTURE_SLUGS: dict[str, str] = {
-    "北海道": "hokkaido", "青森県": "aomori", "岩手県": "iwate",
-    "宮城県": "miyagi", "秋田県": "akita", "山形県": "yamagata",
-    "福島県": "fukushima", "茨城県": "ibaraki", "栃木県": "tochigi",
-    "群馬県": "gunma", "埼玉県": "saitama", "千葉県": "chiba",
-    "東京都": "tokyo", "神奈川県": "kanagawa", "新潟県": "niigata",
-    "富山県": "toyama", "石川県": "ishikawa", "福井県": "fukui",
-    "山梨県": "yamanashi", "長野県": "nagano", "岐阜県": "gifu",
-    "静岡県": "shizuoka", "愛知県": "aichi", "三重県": "mie",
-    "滋賀県": "shiga", "京都府": "kyoto", "大阪府": "osaka",
-    "兵庫県": "hyogo", "奈良県": "nara", "和歌山県": "wakayama",
-    "鳥取県": "tottori", "島根県": "shimane", "岡山県": "okayama",
-    "広島県": "hiroshima", "山口県": "yamaguchi",
-    "徳島県": "tokushima", "香川県": "kagawa",
-    "愛媛県": "ehime", "高知県": "kochi",
-    "福岡県": "fukuoka", "佐賀県": "saga", "長崎県": "nagasaki",
-    "熊本県": "kumamoto", "大分県": "oita",
-    "宮崎県": "miyazaki", "鹿児島県": "kagoshima",
+    "北海道": "hokkaido",
+    "青森県": "aomori",
+    "岩手県": "iwate",
+    "宮城県": "miyagi",
+    "秋田県": "akita",
+    "山形県": "yamagata",
+    "福島県": "fukushima",
+    "茨城県": "ibaraki",
+    "栃木県": "tochigi",
+    "群馬県": "gunma",
+    "埼玉県": "saitama",
+    "千葉県": "chiba",
+    "東京都": "tokyo",
+    "神奈川県": "kanagawa",
+    "新潟県": "niigata",
+    "富山県": "toyama",
+    "石川県": "ishikawa",
+    "福井県": "fukui",
+    "山梨県": "yamanashi",
+    "長野県": "nagano",
+    "岐阜県": "gifu",
+    "静岡県": "shizuoka",
+    "愛知県": "aichi",
+    "三重県": "mie",
+    "滋賀県": "shiga",
+    "京都府": "kyoto",
+    "大阪府": "osaka",
+    "兵庫県": "hyogo",
+    "奈良県": "nara",
+    "和歌山県": "wakayama",
+    "鳥取県": "tottori",
+    "島根県": "shimane",
+    "岡山県": "okayama",
+    "広島県": "hiroshima",
+    "山口県": "yamaguchi",
+    "徳島県": "tokushima",
+    "香川県": "kagawa",
+    "愛媛県": "ehime",
+    "高知県": "kochi",
+    "福岡県": "fukuoka",
+    "佐賀県": "saga",
+    "長崎県": "nagasaki",
+    "熊本県": "kumamoto",
+    "大分県": "oita",
+    "宮崎県": "miyazaki",
+    "鹿児島県": "kagoshima",
     "沖縄県": "okinawa",
 }
 
@@ -329,11 +358,14 @@ class SuumoSearchConnector(BaseConnector):
         all_listings: list[dict[str, Any]] = []
         errors: list[str] = []
 
+        from app.config import settings
+
         try:
             async with httpx.AsyncClient(
                 timeout=25,
                 follow_redirects=True,
                 http2=False,
+                proxy=settings.scrape_proxy or None,
             ) as client:
                 for page in range(1, max_pages + 1):
                     if page == 1:
@@ -347,7 +379,11 @@ class SuumoSearchConnector(BaseConnector):
                         await asyncio.sleep(1.0)
 
                     html = await self._get_page_html(
-                        client, url, page, errors, use_browser,
+                        client,
+                        url,
+                        page,
+                        errors,
+                        use_browser,
                     )
                     if html is None:
                         break
@@ -393,17 +429,24 @@ class SuumoSearchConnector(BaseConnector):
         to a no-op when Playwright is not installed.
         """
         html = await SuumoSearchConnector._fetch_page_with_retry(
-            client, url, page, errors,
+            client,
+            url,
+            page,
+            errors,
         )
 
         if use_browser and (html is None or _looks_like_challenge(html)):
+            from app.config import settings
             from app.connectors import browser_fetch
 
             logger.info(
-                "SUUMO page %d empty/challenge; retrying via browser", page,
+                "SUUMO page %d empty/challenge; retrying via browser",
+                page,
             )
             rendered = await browser_fetch.fetch_html(
-                url, wait_selector="div.property_unit",
+                url,
+                wait_selector="div.property_unit",
+                proxy=settings.scrape_proxy,
             )
             if rendered and not _looks_like_challenge(rendered):
                 return rendered
@@ -421,7 +464,9 @@ class SuumoSearchConnector(BaseConnector):
         for attempt in range(_MAX_RETRIES):
             logger.info(
                 "Fetching SUUMO page %d (attempt %d): %s",
-                page, attempt + 1, url,
+                page,
+                attempt + 1,
+                url,
             )
             headers = {**HEADERS, "Referer": "https://suumo.jp/"}
             resp = await client.get(url, headers=headers)
@@ -432,28 +477,26 @@ class SuumoSearchConnector(BaseConnector):
             if resp.status_code in (202, 429, 503):
                 logger.warning(
                     "SUUMO page %d: HTTP %d, retrying in %.1fs",
-                    page, resp.status_code, _RETRY_DELAY,
+                    page,
+                    resp.status_code,
+                    _RETRY_DELAY,
                 )
                 await asyncio.sleep(_RETRY_DELAY)
                 continue
 
-            errors.append(
-                f"SUUMO page {page}: HTTP {resp.status_code}"
-            )
+            errors.append(f"SUUMO page {page}: HTTP {resp.status_code}")
             return None
 
         # All retries exhausted — try to parse last response anyway
         if resp.status_code in (200, 202):
             logger.info(
                 "SUUMO page %d: using response despite HTTP %d",
-                page, resp.status_code,
+                page,
+                resp.status_code,
             )
             return resp.text
 
-        errors.append(
-            f"SUUMO page {page}: HTTP {resp.status_code} after "
-            f"{_MAX_RETRIES} retries"
-        )
+        errors.append(f"SUUMO page {page}: HTTP {resp.status_code} after {_MAX_RETRIES} retries")
         return None
 
     @staticmethod
@@ -488,7 +531,8 @@ class SuumoSearchConnector(BaseConnector):
             pref_slug = PREFECTURE_SLUGS.get(prefecture, "")
             if not pref_slug:
                 full = _PREF_SHORT.get(
-                    prefecture.rstrip("都道府県"), "",
+                    prefecture.rstrip("都道府県"),
+                    "",
                 )
                 if full:
                     pref_slug = PREFECTURE_SLUGS[full]
@@ -574,32 +618,65 @@ class SuumoSearchConnector(BaseConnector):
 
 # SUUMO price codes (万円 → code for the pc1/pc2 parameter)
 _PRICE_CODES: list[tuple[int, str]] = [
-    (300, "0300"), (400, "0400"), (500, "0500"),
-    (600, "0600"), (700, "0700"), (800, "0800"),
-    (900, "0900"), (1000, "1000"), (1500, "1500"),
-    (2000, "2000"), (2500, "2500"), (3000, "3000"),
-    (3500, "3500"), (4000, "4000"), (4500, "4500"),
-    (5000, "5000"), (6000, "6000"), (7000, "7000"),
-    (8000, "8000"), (9000, "9000"), (10000, "10000"),
+    (300, "0300"),
+    (400, "0400"),
+    (500, "0500"),
+    (600, "0600"),
+    (700, "0700"),
+    (800, "0800"),
+    (900, "0900"),
+    (1000, "1000"),
+    (1500, "1500"),
+    (2000, "2000"),
+    (2500, "2500"),
+    (3000, "3000"),
+    (3500, "3500"),
+    (4000, "4000"),
+    (4500, "4500"),
+    (5000, "5000"),
+    (6000, "6000"),
+    (7000, "7000"),
+    (8000, "8000"),
+    (9000, "9000"),
+    (10000, "10000"),
 ]
 
 # Walking-minutes codes
 _WALK_CODES: dict[int, str] = {
-    1: "01", 3: "03", 5: "05", 7: "07",
-    10: "10", 15: "15", 20: "20",
+    1: "01",
+    3: "03",
+    5: "05",
+    7: "07",
+    10: "10",
+    15: "15",
+    20: "20",
 }
 
 # Age codes (築年数)
 _AGE_CODES: dict[int, str] = {
-    1: "01", 3: "03", 5: "05", 7: "07",
-    10: "10", 15: "15", 20: "20", 25: "25", 30: "30",
+    1: "01",
+    3: "03",
+    5: "05",
+    7: "07",
+    10: "10",
+    15: "15",
+    20: "20",
+    25: "25",
+    30: "30",
 }
 
 # Area codes (㎡)
 _AREA_CODES: dict[int, str] = {
-    20: "20", 25: "25", 30: "30", 40: "40",
-    50: "50", 60: "60", 70: "70", 80: "80",
-    90: "90", 100: "100",
+    20: "20",
+    25: "25",
+    30: "30",
+    40: "40",
+    50: "50",
+    60: "60",
+    70: "70",
+    80: "80",
+    90: "90",
+    100: "100",
 }
 
 
@@ -680,6 +757,7 @@ def _build_suumo_qs(
 # HTML parsing – based on SUUMO's actual DOM structure
 # ---------------------------------------------------------------------------
 
+
 def _looks_like_challenge(html: str) -> bool:
     """Heuristic: True if the page lacks SUUMO listing markup.
 
@@ -716,7 +794,8 @@ def _parse_listing_page(html: str) -> list[dict[str, Any]]:
     # Split HTML by property_unit boundaries
     # Each card starts with <div class="property_unit...">
     card_chunks = re.split(
-        r'<div\s+class="property_unit(?:\s|")', html,
+        r'<div\s+class="property_unit(?:\s|")',
+        html,
     )
 
     for chunk in card_chunks[1:]:  # skip before first card
@@ -733,7 +812,8 @@ def _parse_property_unit(chunk: str) -> dict[str, Any] | None:
 
     # --- Detail page URL ---
     m = re.search(
-        r'href="(/ms/chuko/[^"]*nc_\d+/[^"]*)"', chunk,
+        r'href="(/ms/chuko/[^"]*nc_\d+/[^"]*)"',
+        chunk,
     )
     if m:
         info["url"] = f"https://suumo.jp{m.group(1)}"
@@ -758,9 +838,7 @@ def _parse_property_unit(chunk: str) -> dict[str, Any] | None:
         info["price_text"] = price_text
         m = re.search(r"([\d,]+)\s*万円", price_text)
         if m:
-            info["price_jpy"] = (
-                int(m.group(1).replace(",", "")) * 10_000
-            )
+            info["price_jpy"] = int(m.group(1).replace(",", "")) * 10_000
 
     # 所在地
     if "所在地" in fields:
@@ -868,21 +946,53 @@ def _extract_building_name_from_title(title: str) -> str | None:
     """
     # If the title contains promotional keywords, it's not a name
     promo_keywords = [
-        "頭金", "ローン", "見学", "リフォーム", "リノベ",
-        "即入居", "駅徒歩", "新価格", "値下", "オープン",
-        "ペット", "角部屋", "最上階", "フル",
+        "頭金",
+        "ローン",
+        "見学",
+        "リフォーム",
+        "リノベ",
+        "即入居",
+        "駅徒歩",
+        "新価格",
+        "値下",
+        "オープン",
+        "ペット",
+        "角部屋",
+        "最上階",
+        "フル",
     ]
     if any(kw in title for kw in promo_keywords):
         return None
 
     # Check if it looks like a building name (contains typical suffixes)
     name_suffixes = [
-        "マンション", "レジデンス", "ハウス", "タワー", "コート",
-        "パーク", "プラウド", "グラン", "ルネ", "ライオンズ",
-        "サーパス", "エスリード", "ワコーレ", "アドリーム",
-        "ジオ", "ブランズ", "ハイツ", "パレス", "メゾン",
-        "シャトー", "ロイヤル", "コスモ", "ダイアパレス",
-        "朝日プラザ", "藤和", "ネオ", "セレッソ",
+        "マンション",
+        "レジデンス",
+        "ハウス",
+        "タワー",
+        "コート",
+        "パーク",
+        "プラウド",
+        "グラン",
+        "ルネ",
+        "ライオンズ",
+        "サーパス",
+        "エスリード",
+        "ワコーレ",
+        "アドリーム",
+        "ジオ",
+        "ブランズ",
+        "ハイツ",
+        "パレス",
+        "メゾン",
+        "シャトー",
+        "ロイヤル",
+        "コスモ",
+        "ダイアパレス",
+        "朝日プラザ",
+        "藤和",
+        "ネオ",
+        "セレッソ",
     ]
     if any(s in title for s in name_suffixes):
         return title.strip()
@@ -897,12 +1007,16 @@ def _extract_building_name_from_title(title: str) -> str | None:
 def _strip_tags(html: str) -> str:
     """Remove HTML tags, collapse whitespace."""
     text = re.sub(
-        r"<script[^>]*>.*?</script>", " ",
-        html, flags=re.DOTALL | re.IGNORECASE,
+        r"<script[^>]*>.*?</script>",
+        " ",
+        html,
+        flags=re.DOTALL | re.IGNORECASE,
     )
     text = re.sub(
-        r"<style[^>]*>.*?</style>", " ",
-        text, flags=re.DOTALL | re.IGNORECASE,
+        r"<style[^>]*>.*?</style>",
+        " ",
+        text,
+        flags=re.DOTALL | re.IGNORECASE,
     )
     text = re.sub(r"<sup[^>]*>.*?</sup>", "", text, flags=re.DOTALL)
     text = re.sub(r"<[^>]+>", " ", text)

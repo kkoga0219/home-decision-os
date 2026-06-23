@@ -56,6 +56,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="Playwrightヘッドレスブラウザを使わず HTTP のみで取得",
     )
+    p.add_argument(
+        "--min-rooms",
+        type=int,
+        default=None,
+        help="最低部屋数 (3 → 3LDK以上)。未指定は設定値 (既定3)",
+    )
     return p.parse_args(argv)
 
 
@@ -77,6 +83,7 @@ async def _main(argv: list[str]) -> int:
         sources=sources,
         max_pages=args.max_pages,
         use_browser=not args.no_browser,
+        min_rooms=(args.min_rooms if args.min_rooms is not None else settings.alert_min_rooms),
         dry_run=args.dry_run,
     )
 

@@ -858,15 +858,20 @@ def _parse_property_unit(chunk: str) -> dict[str, Any] | None:
     info: dict[str, Any] = {"parse_method": "structured"}
 
     # --- Detail page URL ---
+    # SUUMO uses different path prefixes by property type:
+    #   /ms/chuko/...          → 中古マンション
+    #   /chukoikkodate/...     → 中古戸建て
+    #   /chumosi/...            → 中古一戸建 (older listings)
     m = re.search(
-        r'href="(/ms/chuko/[^"]*nc_\d+/[^"]*)"',
+        r'href="(/(?:ms/chuko|chukoikkodate|chumosi)/[^"]*nc_\d+/[^"]*)"',
         chunk,
     )
     if m:
         info["url"] = f"https://suumo.jp{m.group(1)}"
     else:
         m2 = re.search(
-            r'href="(https?://suumo\.jp/ms/chuko/[^"]*nc_\d+/[^"]*)"',
+            r'href="(https?://suumo\.jp/(?:ms/chuko|chukoikkodate|chumosi)'
+            r'/[^"]*nc_\d+/[^"]*)"',
             chunk,
         )
         if m2:

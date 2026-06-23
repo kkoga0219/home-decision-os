@@ -1,0 +1,15 @@
+# 塚口エリア マイリスト
+#
+# このファイルに気になる物件のURLを1行ずつ書くと、3時間ごとの定期実行で
+# 状況追跡され（価格変更・成約済み・掲載終了）、変更があれば LINE に通知が
+# 来ます。GitHub の Web 上でこのファイルを編集してコミットすればOK。
+#
+# 形式: 1行1URL。空行 / # で始まる行は無視されます。
+# 対応サイト: SUUMO / athome (価格・住所・間取り検知) / HOME'S (掲載終了のみ)
+#
+# 例:
+# https://suumo.jp/ms/chuko/hyogo/sc_amagasaki/nc_21035306/
+# https://suumo.jp/chukoikkodate/hyogo/sc_amagasaki/nc_20587578/
+
+https://suumo.jp/ms/chuko/hyogo/sc_amagasaki/nc_21035306/
+https://suumo.jp/chukoikkodate/hyogo/sc_amagasaki/nc_20587578/

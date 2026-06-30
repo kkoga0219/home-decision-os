@@ -63,7 +63,7 @@ async def gather_candidates(
     assume_unknown_is_hankyu: bool = False,
     use_browser: bool = True,
     min_rooms: int = 3,
-    mansion_min_built_year: int = 1991,
+    mansion_min_built_year: int = 1981,
 ) -> list[dict[str, Any]]:
     """Search all sources/types and return qualifying listings.
 
@@ -186,6 +186,17 @@ def _group_key(ls: dict[str, Any]) -> tuple:
         (ls.get("layout") or "").strip(),
         ls.get("price_jpy"),
     )
+
+
+def _group_state_key(ls: dict[str, Any]) -> str:
+    """Persistent dedup key for a building+room across runs.
+
+    Unlike the per-listing URL, this is stable across the different broker
+    listings (different nc_ IDs) of the SAME room — so e.g. メゾンローズ塚口
+    1680万円 3LDK is notified once, not every time a new broker re-lists it.
+    """
+    name, layout, price = _group_key(ls)
+    return f"grp:{name}|{layout}|{price}"
 
 
 def _group_listings(listings: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -322,7 +333,7 @@ async def run_tsukaguchi_alert(
     assume_unknown_is_hankyu: bool = False,
     use_browser: bool = True,
     min_rooms: int = 3,
-    mansion_min_built_year: int = 1991,
+    mansion_min_built_year: int = 1981,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Run the full alert pipeline and (optionally) push to LINE.
@@ -338,12 +349,13 @@ async def run_tsukaguchi_alert(
         mansion_min_built_year=mansion_min_built_year,
     )
 
-    # A grouped candidate is "new" if ANY of its members is unseen.
+    # A grouped candidate is "new" only if its BUILDING+ROOM key is unseen.
+    # Keying on the group (not the URL) means a different broker re-listing
+    # the same room under a new nc_ID won't re-notify (the メゾンローズ問題).
     state = AlertState.load(state_path)
 
     def _group_is_new(rep: dict[str, Any]) -> bool:
-        members = rep.get("group_members") or [rep]
-        return any(state.is_new(m) for m in members)
+        return not state.is_seen_key(_group_state_key(rep))
 
     new_listings = [ls for ls in candidates if _group_is_new(ls)]
 
@@ -351,9 +363,10 @@ async def run_tsukaguchi_alert(
     truncated = len(new_listings) - len(notify)
 
     def _mark_all(reps: list[dict[str, Any]]) -> None:
-        # Mark every member of every notified group so duplicates / other
-        # broker listings of the same room don't resurface next run.
+        # Mark the group key (so any broker's re-listing of the same room is
+        # suppressed) plus every member URL (belt-and-suspenders).
         for rep in reps:
+            state.add_key(_group_state_key(rep))
             for m in rep.get("group_members") or [rep]:
                 state.mark(m)
         state.save(state_path)

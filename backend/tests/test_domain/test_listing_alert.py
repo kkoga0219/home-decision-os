@@ -118,6 +118,41 @@ class TestGroupListings:
         assert "https://x/2" in msg
 
 
+class TestCrossRunGroupDedup:
+    """Same building+room via a different broker URL must not re-notify."""
+
+    def test_relisted_under_new_url_not_renotified(self, tmp_path, monkeypatch):
+        path = tmp_path / "state.json"
+
+        # Run 1: メゾンローズ via broker A.
+        async def gather_a(**kw):
+            return _group_listings(
+                [_ls("メゾンローズ塚口", 16_800_000, url="https://x/A", walk=10)]
+            )
+
+        monkeypatch.setattr("app.services.listing_alert.gather_candidates", gather_a)
+        s1 = _run(
+            run_tsukaguchi_alert(
+                channel_token="", target_id="", state_path=str(path), dry_run=True
+            )
+        )
+        assert s1["new"] == 1
+
+        # Run 2: SAME building+room, DIFFERENT broker URL → not new.
+        async def gather_b(**kw):
+            return _group_listings(
+                [_ls("メゾンローズ塚口", 16_800_000, url="https://x/B", walk=10)]
+            )
+
+        monkeypatch.setattr("app.services.listing_alert.gather_candidates", gather_b)
+        s2 = _run(
+            run_tsukaguchi_alert(
+                channel_token="", target_id="", state_path=str(path), dry_run=True
+            )
+        )
+        assert s2["new"] == 0
+
+
 class TestAgeFilter:
     def test_mansion_before_cutoff_excluded(self):
         assert not _passes_age_filter("mansion", {"built_year": 1989}, 1991)

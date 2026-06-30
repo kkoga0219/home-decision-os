@@ -772,8 +772,8 @@ class TsukaguchiAlertRequest(BaseModel):
         description="最低部屋数（3 → 3LDK以上）",
     )
     mansion_min_built_year: int = Field(
-        default=1991,
-        description="マンションの築年下限（1991 → 1990年以前を除外）。0で無効",
+        default=1981,
+        description="マンションの築年下限（1981 → 新耐震基準。それ以前を除外）。0で無効",
     )
     dry_run: bool = Field(
         default=False,

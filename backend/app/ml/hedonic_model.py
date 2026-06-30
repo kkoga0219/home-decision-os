@@ -33,7 +33,6 @@ from typing import Any
 from app.ml.data_pipeline import (
     LAYOUT_CATEGORIES,
     NUM_LAYOUT_CATS,
-    CleanRecord,
     MLDataset,
 )
 
@@ -48,6 +47,7 @@ _HAS_SKLEARN = False
 try:
     from sklearn.ensemble import GradientBoostingRegressor
     from sklearn.model_selection import cross_val_score
+
     _HAS_SKLEARN = True
 except ImportError:
     pass
@@ -57,17 +57,17 @@ except ImportError:
 class PricePrediction:
     """Result of a hedonic price prediction."""
 
-    predicted_unit_price: int     # 予測㎡単価 (JPY/㎡)
-    predicted_total_price: int    # 予測適正価格 (JPY)
-    confidence_low: int           # 下限 (JPY)
-    confidence_high: int          # 上限 (JPY)
-    deviation_pct: float | None   # 実勢価格との乖離率 (%, +means overpriced)
-    assessment: str               # "割安" / "適正" / "やや割高" / "割高"
-    model_r2: float               # モデルの決定係数
-    model_mape: float             # Mean Absolute Percentage Error
-    training_samples: int         # 学習データ件数
-    top_features: list[dict]      # 重要特徴量 Top-5
-    method: str                   # モデル名
+    predicted_unit_price: int  # 予測㎡単価 (JPY/㎡)
+    predicted_total_price: int  # 予測適正価格 (JPY)
+    confidence_low: int  # 下限 (JPY)
+    confidence_high: int  # 上限 (JPY)
+    deviation_pct: float | None  # 実勢価格との乖離率 (%, +means overpriced)
+    assessment: str  # "割安" / "適正" / "やや割高" / "割高"
+    model_r2: float  # モデルの決定係数
+    model_mape: float  # Mean Absolute Percentage Error
+    training_samples: int  # 学習データ件数
+    top_features: list[dict]  # 重要特徴量 Top-5
+    method: str  # モデル名
 
 
 @dataclass
@@ -109,7 +109,11 @@ class HedonicModel:
             Actual listing price for deviation calculation.
         """
         features = self._make_features(
-            floor_area, age_years, walking_minutes, layout, station_name,
+            floor_area,
+            age_years,
+            walking_minutes,
+            layout,
+            station_name,
         )
 
         pred_unit = float(self._model.predict([features])[0])
@@ -128,7 +132,8 @@ class HedonicModel:
         assessment = "適正"
         if listing_price and listing_price > 0:
             deviation = round(
-                (listing_price / pred_total - 1) * 100, 1,
+                (listing_price / pred_total - 1) * 100,
+                1,
             )
             if deviation < -15:
                 assessment = "かなり割安"
@@ -184,16 +189,15 @@ class HedonicModel:
             stn_pop = sorted(counts)[len(counts) // 2] if counts else 10
 
         # Use latest quarter for prediction
-        max_q = max(r.quarter_index for r in self._dataset.records)
         q_norm = 1.0  # Predict at current time
 
         row = [
             floor_area,
             log_area,
             age_years,
-            age_years ** 2,
+            age_years**2,
             walking_minutes,
-            walking_minutes ** 2,
+            walking_minutes**2,
             age_years * walking_minutes,
             q_norm,
             float(stn_pop),
@@ -242,6 +246,7 @@ class HedonicModel:
 # Training
 # ===================================================================
 
+
 def train_hedonic_model(dataset: MLDataset) -> HedonicModel | None:
     """Train a hedonic price model on MLIT transaction data.
 
@@ -249,7 +254,8 @@ def train_hedonic_model(dataset: MLDataset) -> HedonicModel | None:
     """
     if dataset.n_samples < 15:
         logger.warning(
-            "Too few samples for hedonic model: %d", dataset.n_samples,
+            "Too few samples for hedonic model: %d",
+            dataset.n_samples,
         )
         return None
 
@@ -275,8 +281,8 @@ def _train_sklearn_gbr(dataset: MLDataset) -> HedonicModel:
         learning_rate=0.08,
         min_samples_leaf=min_samples_leaf,
         subsample=0.8,
-        loss="huber",       # Robust to outliers
-        alpha=0.9,          # Huber quantile
+        loss="huber",  # Robust to outliers
+        alpha=0.9,  # Huber quantile
         random_state=42,
     )
 
@@ -286,32 +292,30 @@ def _train_sklearn_gbr(dataset: MLDataset) -> HedonicModel:
     n_folds = min(5, max(2, dataset.n_samples // 20))
     if n_folds >= 2 and dataset.n_samples >= 30:
         cv_scores = cross_val_score(
-            model, X, y, cv=n_folds, scoring="r2",
+            model,
+            X,
+            y,
+            cv=n_folds,
+            scoring="r2",
         )
         r2 = float(cv_scores.mean())
     else:
         # Simple train R²
         from sklearn.metrics import r2_score
+
         r2 = float(r2_score(y, model.predict(X)))
 
     # MAPE
     predictions = model.predict(X)
     abs_pct_errors = [
-        abs(pred - actual) / actual
-        for pred, actual in zip(predictions, y)
-        if actual > 0
+        abs(pred - actual) / actual for pred, actual in zip(predictions, y) if actual > 0
     ]
-    mape = (
-        sum(abs_pct_errors) / len(abs_pct_errors)
-        if abs_pct_errors else 0.5
-    )
+    mape = sum(abs_pct_errors) / len(abs_pct_errors) if abs_pct_errors else 0.5
 
     # Residual std for confidence intervals
     residuals = [pred - actual for pred, actual in zip(predictions, y)]
     mean_resid = sum(residuals) / len(residuals)
-    resid_std = (
-        sum((r - mean_resid) ** 2 for r in residuals) / len(residuals)
-    ) ** 0.5
+    resid_std = (sum((r - mean_resid) ** 2 for r in residuals) / len(residuals)) ** 0.5
 
     return HedonicModel(
         _model=model,
@@ -343,7 +347,7 @@ def _train_fallback_ridge(dataset: MLDataset) -> HedonicModel:
         m = sum(col) / n
         means[j] = m
         var = sum((v - m) ** 2 for v in col) / n
-        stds[j] = var ** 0.5 if var > 0 else 1.0
+        stds[j] = var**0.5 if var > 0 else 1.0
 
     X_std = []
     for i in range(n):
@@ -383,20 +387,13 @@ def _train_fallback_ridge(dataset: MLDataset) -> HedonicModel:
             self.y_mean = y_mean
             # Approximate feature importances from |weights|
             total = sum(abs(wi) for wi in w)
-            self.feature_importances_ = [
-                abs(wi) / total if total > 0 else 0 for wi in w
-            ]
+            self.feature_importances_ = [abs(wi) / total if total > 0 else 0 for wi in w]
 
         def predict(self, X_new):
             results = []
             for row in X_new:
-                std_row = [
-                    (row[j] - self.means[j]) / self.stds[j]
-                    for j in range(len(row))
-                ]
-                pred = self.y_mean + sum(
-                    std_row[j] * self.w[j] for j in range(len(self.w))
-                )
+                std_row = [(row[j] - self.means[j]) / self.stds[j] for j in range(len(row))]
+                pred = self.y_mean + sum(std_row[j] * self.w[j] for j in range(len(self.w)))
                 results.append(pred)
             return results
 
@@ -411,19 +408,12 @@ def _train_fallback_ridge(dataset: MLDataset) -> HedonicModel:
     ss_tot = sum((a - y_mean) ** 2 for a in y)
     r2 = 1 - ss_res / ss_tot if ss_tot > 0 else 0
 
-    abs_pct_errors = [
-        abs(p - a) / a for p, a in zip(predictions, y) if a > 0
-    ]
-    mape = (
-        sum(abs_pct_errors) / len(abs_pct_errors)
-        if abs_pct_errors else 0.5
-    )
+    abs_pct_errors = [abs(p - a) / a for p, a in zip(predictions, y) if a > 0]
+    mape = sum(abs_pct_errors) / len(abs_pct_errors) if abs_pct_errors else 0.5
 
     residuals = [p - a for p, a in zip(predictions, y)]
     mean_r = sum(residuals) / len(residuals)
-    resid_std = (
-        sum((r - mean_r) ** 2 for r in residuals) / len(residuals)
-    ) ** 0.5
+    resid_std = (sum((r - mean_r) ** 2 for r in residuals) / len(residuals)) ** 0.5
 
     return HedonicModel(
         _model=model,

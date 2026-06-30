@@ -34,7 +34,6 @@ from app.domain.mortgage import (
     calc_tax_credit_annual,
 )
 
-
 # ---------------------------------------------------------------------------
 # 諸費用パラメータ (デフォルト値)
 # ---------------------------------------------------------------------------
@@ -79,16 +78,17 @@ DEFAULT_TAX_CREDIT_MAX = 210_000  # 年間上限 (一般住宅)
 # データクラス
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class InitialCosts:
     """購入時の諸費用."""
 
     down_payment: int = 0
-    broker_fee: int = 0          # 仲介手数料
-    registration_cost: int = 0   # 登記費用
-    acquisition_tax: int = 0     # 不動産取得税
+    broker_fee: int = 0  # 仲介手数料
+    registration_cost: int = 0  # 登記費用
+    acquisition_tax: int = 0  # 不動産取得税
     loan_guarantee_fee: int = 0  # ローン保証料
-    other_initial: int = 0       # その他
+    other_initial: int = 0  # その他
     total: int = 0
 
 
@@ -99,26 +99,26 @@ class AnnualCashflow:
     year: int
 
     # 支出
-    loan_payment: int = 0           # ローン返済 (年間)
-    management_fee: int = 0         # 管理費 (年間)
-    repair_reserve: int = 0         # 修繕積立金 (年間)
-    property_tax: int = 0           # 固定資産税+都市計画税
-    insurance: int = 0              # 火災保険
+    loan_payment: int = 0  # ローン返済 (年間)
+    management_fee: int = 0  # 管理費 (年間)
+    repair_reserve: int = 0  # 修繕積立金 (年間)
+    property_tax: int = 0  # 固定資産税+都市計画税
+    insurance: int = 0  # 火災保険
     total_expense: int = 0
 
     # 減税・控除
-    tax_credit: int = 0             # 住宅ローン控除
-    depreciation_benefit: int = 0   # 減価償却による節税効果
+    tax_credit: int = 0  # 住宅ローン控除
+    depreciation_benefit: int = 0  # 減価償却による節税効果
 
     # 収入 (投資シナリオ)
-    gross_rent: int = 0             # 賃料収入 (満室想定)
-    vacancy_loss: int = 0           # 空室損
-    pm_fee: int = 0                 # 賃貸管理費
-    net_rent: int = 0               # 手取り賃料
+    gross_rent: int = 0  # 賃料収入 (満室想定)
+    vacancy_loss: int = 0  # 空室損
+    pm_fee: int = 0  # 賃貸管理費
+    net_rent: int = 0  # 手取り賃料
 
     # キャッシュフロー
-    cashflow: int = 0               # 年間CF (収入 - 支出 + 控除)
-    cumulative_cashflow: int = 0    # 累積CF
+    cashflow: int = 0  # 年間CF (収入 - 支出 + 控除)
+    cumulative_cashflow: int = 0  # 累積CF
 
     # ローン残高
     outstanding_balance: int = 0
@@ -129,13 +129,13 @@ class ExitScenario:
     """売却時のシナリオ."""
 
     year: int
-    sale_price: int = 0           # 想定売却価格
+    sale_price: int = 0  # 想定売却価格
     outstanding_balance: int = 0  # ローン残高
-    selling_costs: int = 0        # 売却諸費用 (仲介手数料等)
-    capital_gain: int = 0         # 売却益 (税引前)
+    selling_costs: int = 0  # 売却諸費用 (仲介手数料等)
+    capital_gain: int = 0  # 売却益 (税引前)
     cumulative_cashflow: int = 0  # それまでの累積CF
-    total_return: int = 0         # トータルリターン
-    annual_roi_pct: float = 0.0   # 年利換算ROI
+    total_return: int = 0  # トータルリターン
+    annual_roi_pct: float = 0.0  # 年利換算ROI
 
 
 @dataclass
@@ -156,14 +156,15 @@ class CashflowSimulationResult:
     exit_scenarios: list[ExitScenario] = field(default_factory=list)
 
     # サマリー
-    total_cost_10yr: int = 0       # 10年間の総支出
-    total_benefit_10yr: int = 0    # 10年間の総控除+収入
-    net_cost_10yr: int = 0         # 10年間の実質負担
+    total_cost_10yr: int = 0  # 10年間の総支出
+    total_benefit_10yr: int = 0  # 10年間の総控除+収入
+    net_cost_10yr: int = 0  # 10年間の実質負担
 
 
 # ---------------------------------------------------------------------------
 # メイン関数
 # ---------------------------------------------------------------------------
+
 
 def simulate_cashflow(
     # 物件情報
@@ -172,34 +173,27 @@ def simulate_cashflow(
     built_year: int | None = None,
     management_fee_jpy: int = 0,
     repair_reserve_jpy: int = 0,
-
     # ローン条件
     down_payment_jpy: int = 0,
     annual_interest_rate: float = 0.005,
     loan_years: int = 35,
-
     # 住宅ローン控除
     tax_credit_rate: float = DEFAULT_TAX_CREDIT_RATE,
     tax_credit_years: int | None = None,  # None → 中古10年/新築13年
     tax_credit_max: int = DEFAULT_TAX_CREDIT_MAX,
-
     # コスト
     property_tax_annual: int | None = None,  # None → 自動推定
     insurance_annual: int = DEFAULT_INSURANCE_ANNUAL,
-
     # 投資シナリオ
     scenario_type: str = "self_use",  # "self_use" or "investment"
-    expected_rent_jpy: int = 0,       # 投資の場合の月額賃料
+    expected_rent_jpy: int = 0,  # 投資の場合の月額賃料
     vacancy_rate: float = DEFAULT_VACANCY_RATE,
     pm_fee_rate: float = DEFAULT_PM_FEE_RATE,
     marginal_tax_rate: float = 0.20,  # 所得税率 (減価償却の節税効果計算用)
-
     # シミュレーション期間
     simulation_years: int = 35,
-
     # 売却想定
     annual_price_decline_rate: float = 0.015,  # 年間下落率 (1.5%)
-
     # 諸費用カスタム
     broker_fee_jpy: int | None = None,
     registration_cost_jpy: int | None = None,
@@ -209,6 +203,7 @@ def simulate_cashflow(
     """N年間のキャッシュフローを年次でシミュレーションする."""
 
     import datetime
+
     current_year = datetime.date.today().year
 
     # --- 築年数判定 ---
@@ -217,8 +212,7 @@ def simulate_cashflow(
 
     if tax_credit_years is None:
         tax_credit_years = (
-            DEFAULT_TAX_CREDIT_YEARS_NEW if is_new
-            else DEFAULT_TAX_CREDIT_YEARS_USED
+            DEFAULT_TAX_CREDIT_YEARS_NEW if is_new else DEFAULT_TAX_CREDIT_YEARS_USED
         )
 
     # --- ローン計算 ---
@@ -285,7 +279,7 @@ def simulate_cashflow(
         # 土地部分 (マンション按分後 + 小規模住宅用地の特例)
         # マンションの土地持分は非常に小さい: 市場価格の10%程度
         land_assessed = int(price_jpy * 0.10)
-        land_fixed_tax = int(land_assessed * PROPERTY_TAX_RATE / 6)     # 特例1/6
+        land_fixed_tax = int(land_assessed * PROPERTY_TAX_RATE / 6)  # 特例1/6
         land_city_tax = int(land_assessed * CITY_PLANNING_TAX_RATE / 3)  # 特例1/3
         land_tax = land_fixed_tax + land_city_tax
 
@@ -337,9 +331,7 @@ def simulate_cashflow(
             balance = approximate_outstanding_balance(
                 loan_amount, annual_interest_rate, loan_years, yr
             )
-            cf.tax_credit = calc_tax_credit_annual(
-                balance, tax_credit_rate, tax_credit_max
-            )
+            cf.tax_credit = calc_tax_credit_annual(balance, tax_credit_rate, tax_credit_max)
         else:
             cf.tax_credit = 0
 
@@ -355,15 +347,12 @@ def simulate_cashflow(
         # 赤字が出た場合のみ、給与所得等と損益通算して節税効果が発生
         # ※ 賃料収入がゼロなら不動産所得もゼロ → 減価償却による節税なし
         if scenario_type == "investment" and annual_depreciation > 0 and cf.net_rent > 0:
-            remaining = max(
-                (RC_USEFUL_LIFE - building_age) + int(building_age * 0.2), 2
-            )
+            remaining = max((RC_USEFUL_LIFE - building_age) + int(building_age * 0.2), 2)
             if yr <= remaining:
                 # 不動産所得 = 手取り賃料 - (管理費 + 修繕 + 固定資産税 + 保険) - 減価償却
                 # ※ ローン利息も経費だが簡略化のため含めない (保守的)
                 rental_expenses = (
-                    cf.management_fee + cf.repair_reserve
-                    + cf.property_tax + cf.insurance
+                    cf.management_fee + cf.repair_reserve + cf.property_tax + cf.insurance
                 )
                 real_estate_income = cf.net_rent - rental_expenses - annual_depreciation
                 if real_estate_income < 0:
@@ -375,12 +364,7 @@ def simulate_cashflow(
                     cf.depreciation_benefit = 0
 
         # 年間CF
-        cf.cashflow = (
-            cf.net_rent
-            + cf.tax_credit
-            + cf.depreciation_benefit
-            - cf.total_expense
-        )
+        cf.cashflow = cf.net_rent + cf.tax_credit + cf.depreciation_benefit - cf.total_expense
         cumulative_cf += cf.cashflow
         cf.cumulative_cashflow = cumulative_cf
 
@@ -425,13 +409,10 @@ def simulate_cashflow(
 
         # 年利ROI:
         # 総投入額 (初期費用 + 年間支出総額)
-        total_cash_out = initial.total + sum(
-            c.total_expense for c in cashflows[:exit_yr]
-        )
+        total_cash_out = initial.total + sum(c.total_expense for c in cashflows[:exit_yr])
         # 総回収額 (控除 + 収入 + 売却手取り)
         total_cash_in = sum(
-            c.tax_credit + c.depreciation_benefit + c.net_rent
-            for c in cashflows[:exit_yr]
+            c.tax_credit + c.depreciation_benefit + c.net_rent for c in cashflows[:exit_yr]
         ) + max(net_sale, 0)
 
         if total_cash_out > 0 and exit_yr > 0:
@@ -441,16 +422,18 @@ def simulate_cashflow(
         else:
             annual_roi = 0.0
 
-        exit_scenarios.append(ExitScenario(
-            year=exit_yr,
-            sale_price=sale_price,
-            outstanding_balance=balance,
-            selling_costs=selling_costs,
-            capital_gain=net_sale,
-            cumulative_cashflow=cum_cf,
-            total_return=total_return,
-            annual_roi_pct=round(annual_roi * 100, 2),
-        ))
+        exit_scenarios.append(
+            ExitScenario(
+                year=exit_yr,
+                sale_price=sale_price,
+                outstanding_balance=balance,
+                selling_costs=selling_costs,
+                capital_gain=net_sale,
+                cumulative_cashflow=cum_cf,
+                total_return=total_return,
+                annual_roi_pct=round(annual_roi * 100, 2),
+            )
+        )
 
     # --- サマリー (10年) ---
     cf_10 = cashflows[:10] if len(cashflows) >= 10 else cashflows

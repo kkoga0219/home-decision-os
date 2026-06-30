@@ -38,17 +38,17 @@ class MLExitScoreResult:
     """Enhanced exit score with MLIT-backed factors."""
 
     # Overall
-    total_score: int                # 0-100
+    total_score: int  # 0-100
     assessment: str
 
     # Data-driven factors
-    liquidity_score: int            # 0-10: real transaction volume
-    liquidity_detail: str           # Human-readable detail
-    price_retention_score: int      # 0-10: actual depreciation curve
+    liquidity_score: int  # 0-10: real transaction volume
+    liquidity_detail: str  # Human-readable detail
+    price_retention_score: int  # 0-10: actual depreciation curve
     price_retention_detail: str
-    momentum_score: int             # 0-10: price trend
+    momentum_score: int  # 0-10: price trend
     momentum_detail: str
-    demand_match_score: int         # 0-10: demand for this profile
+    demand_match_score: int  # 0-10: demand for this profile
     demand_match_detail: str
 
     # Traditional factors (kept from existing model)
@@ -58,8 +58,8 @@ class MLExitScoreResult:
 
     # Metadata
     n_transactions: int
-    data_quality: str               # "MLIT実データ" or "推定"
-    comparable_count: int           # Number of similar transactions found
+    data_quality: str  # "MLIT実データ" or "推定"
+    comparable_count: int  # Number of similar transactions found
 
 
 def calc_ml_exit_score(
@@ -89,8 +89,13 @@ def calc_ml_exit_score(
 
     if dataset is None or dataset.n_samples < 10:
         return _fallback_score(
-            stn_score, size_score, layout_score,
-            walking_minutes, floor_area, layout, age_years,
+            stn_score,
+            size_score,
+            layout_score,
+            walking_minutes,
+            floor_area,
+            layout,
+            age_years,
         )
 
     records = dataset.records
@@ -125,7 +130,8 @@ def calc_ml_exit_score(
     # Compare unit prices of newer vs older properties in the data
     if age_years is not None:
         ret_score, ret_detail = _calc_price_retention(
-            records, age_years,
+            records,
+            age_years,
         )
     else:
         ret_score = 5
@@ -137,11 +143,13 @@ def calc_ml_exit_score(
 
     # --- 4. Demand match score ---
     # How many recent transactions match this property's profile?
-    layout_upper = (
-        layout.upper().replace(" ", "") if layout else ""
-    )
+    layout_upper = layout.upper().replace(" ", "") if layout else ""
     match_score, match_detail, comp_count = _calc_demand_match(
-        records, floor_area, age_years, layout_upper, station_name,
+        records,
+        floor_area,
+        age_years,
+        layout_upper,
+        station_name,
     )
 
     # --- Weighted total ---
@@ -203,6 +211,7 @@ def calc_ml_exit_score(
 # Internal scoring functions
 # ===================================================================
 
+
 def _calc_price_retention(
     records: list,
     subject_age: float,
@@ -213,10 +222,7 @@ def _calc_price_retention(
     vs properties 10 years newer to estimate retention rate.
     """
     # Subject-age bracket
-    target_recs = [
-        r for r in records
-        if abs(r.age_years - subject_age) <= 5
-    ]
+    target_recs = [r for r in records if abs(r.age_years - subject_age) <= 5]
     # Newer reference bracket (0-10 years old)
     new_recs = [r for r in records if r.age_years <= 10]
 
@@ -333,18 +339,13 @@ def _calc_demand_match(
         if layout_cat >= 0 and abs(r.layout_cat - layout_cat) <= 1:
             match_count += 1
         # Station match
-        if station_name and (
-            station_name in r.station_name
-            or r.station_name in station_name
-        ):
+        if station_name and (station_name in r.station_name or r.station_name in station_name):
             match_count += 1
 
         if match_count >= 2:  # At least 2 criteria match
             similar.append(r)
 
     comp_count = len(similar)
-    total = len(records)
-    ratio = comp_count / total if total > 0 else 0
 
     if comp_count >= 30:
         score = 10

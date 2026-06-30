@@ -114,16 +114,22 @@ class TestLoanScenarios:
     def test_list_loan_scenarios(self):
         prop = client.post("/properties", json=SAMPLE_PROPERTY).json()
         pid = prop["id"]
-        client.post(f"/properties/{pid}/loan-scenarios", json={
-            "down_payment_jpy": 5_000_000,
-            "annual_interest_rate": 0.005,
-            "loan_years": 35,
-        })
-        client.post(f"/properties/{pid}/loan-scenarios", json={
-            "down_payment_jpy": 10_000_000,
-            "annual_interest_rate": 0.015,
-            "loan_years": 35,
-        })
+        client.post(
+            f"/properties/{pid}/loan-scenarios",
+            json={
+                "down_payment_jpy": 5_000_000,
+                "annual_interest_rate": 0.005,
+                "loan_years": 35,
+            },
+        )
+        client.post(
+            f"/properties/{pid}/loan-scenarios",
+            json={
+                "down_payment_jpy": 10_000_000,
+                "annual_interest_rate": 0.015,
+                "loan_years": 35,
+            },
+        )
         res = client.get(f"/properties/{pid}/loan-scenarios")
         assert res.status_code == 200
         assert len(res.json()) == 2
@@ -134,11 +140,14 @@ class TestRentalScenarios:
         prop = client.post("/properties", json=SAMPLE_PROPERTY).json()
         pid = prop["id"]
         # Create a loan first
-        client.post(f"/properties/{pid}/loan-scenarios", json={
-            "down_payment_jpy": 7_000_000,
-            "annual_interest_rate": 0.005,
-            "loan_years": 35,
-        })
+        client.post(
+            f"/properties/{pid}/loan-scenarios",
+            json={
+                "down_payment_jpy": 7_000_000,
+                "annual_interest_rate": 0.005,
+                "loan_years": 35,
+            },
+        )
         rental_body = {
             "expected_rent_jpy": 120_000,
             "vacancy_rate": 0.05,

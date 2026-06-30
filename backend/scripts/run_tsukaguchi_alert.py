@@ -41,8 +41,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         choices=["new", "mylist", "both"],
         default="both",
         help=(
-            "実行モード: new=新着検索のみ / mylist=マイリスト追跡のみ / "
-            "both=両方 (default: both)"
+            "実行モード: new=新着検索のみ / mylist=マイリスト追跡のみ / both=両方 (default: both)"
         ),
     )
     p.add_argument(
@@ -96,11 +95,7 @@ async def _main(argv: list[str]) -> int:
             sources=sources,
             max_pages=args.max_pages,
             use_browser=not args.no_browser,
-            min_rooms=(
-                args.min_rooms
-                if args.min_rooms is not None
-                else settings.alert_min_rooms
-            ),
+            min_rooms=(args.min_rooms if args.min_rooms is not None else settings.alert_min_rooms),
             mansion_min_built_year=settings.alert_mansion_min_built_year,
             dry_run=args.dry_run,
         )

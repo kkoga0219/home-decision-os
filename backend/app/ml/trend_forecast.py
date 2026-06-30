@@ -21,7 +21,6 @@ The model captures:
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 
 from app.ml.data_pipeline import MLDataset
@@ -31,7 +30,7 @@ from app.ml.data_pipeline import MLDataset
 class QuarterForecast:
     """Forecast for a single future quarter."""
 
-    period_label: str       # e.g. "2026Q2"
+    period_label: str  # e.g. "2026Q2"
     predicted_unit_price: int
     confidence_low: int
     confidence_high: int
@@ -41,18 +40,18 @@ class QuarterForecast:
 class TrendForecastResult:
     """Complete trend analysis and forecast."""
 
-    current_unit_price: int   # Most recent quarter avg
-    trend_direction: str      # "上昇" / "横ばい" / "下落"
-    trend_pct_annual: float   # Annualized % change
-    acceleration: str         # "加速" / "安定" / "減速"
-    volatility: str           # "低い" / "普通" / "高い"
-    volatility_pct: float     # CV (coefficient of variation)
-    n_quarters: int           # Number of quarters with data
-    n_transactions: int       # Total transactions analyzed
+    current_unit_price: int  # Most recent quarter avg
+    trend_direction: str  # "上昇" / "横ばい" / "下落"
+    trend_pct_annual: float  # Annualized % change
+    acceleration: str  # "加速" / "安定" / "減速"
+    volatility: str  # "低い" / "普通" / "高い"
+    volatility_pct: float  # CV (coefficient of variation)
+    n_quarters: int  # Number of quarters with data
+    n_transactions: int  # Total transactions analyzed
     forecasts: list[QuarterForecast]
     quarterly_history: list[dict]  # Historical quarters for charting
     method: str
-    confidence_note: str      # Data quality note
+    confidence_note: str  # Data quality note
 
 
 def forecast_price_trend(
@@ -83,8 +82,7 @@ def forecast_price_trend(
         # Weight more recent quarter higher
         w_last = last["count"] / (last["count"] + prev["count"] * 0.5)
         current_price = int(
-            last["avg_unit_price"] * w_last
-            + prev["avg_unit_price"] * (1 - w_last)
+            last["avg_unit_price"] * w_last + prev["avg_unit_price"] * (1 - w_last)
         )
     else:
         current_price = quarter_data[-1]["avg_unit_price"]
@@ -137,10 +135,7 @@ def forecast_price_trend(
         acceleration = "データ不足"
 
     # Volatility (coefficient of variation of residuals)
-    residuals = [
-        (y - (slope * x + intercept)) / max(y, 1)
-        for x, y in zip(xs, ys)
-    ]
+    residuals = [(y - (slope * x + intercept)) / max(y, 1) for x, y in zip(xs, ys)]
     if residuals:
         resid_mean = sum(abs(r) for r in residuals) / len(residuals)
         volatility_pct = round(resid_mean * 100, 1)
@@ -155,13 +150,11 @@ def forecast_price_trend(
         volatility = "高い"
 
     # Residual standard deviation for confidence intervals
-    resid_abs = [
-        abs(y - (slope * x + intercept))
-        for x, y in zip(xs, ys)
-    ]
+    resid_abs = [abs(y - (slope * x + intercept)) for x, y in zip(xs, ys)]
     resid_std = (
-        (sum(r ** 2 for r in resid_abs) / len(resid_abs)) ** 0.5
-        if resid_abs else current_price * 0.1
+        (sum(r**2 for r in resid_abs) / len(resid_abs)) ** 0.5
+        if resid_abs
+        else current_price * 0.1
     )
 
     # Generate forecasts
@@ -181,25 +174,27 @@ def forecast_price_trend(
         fy = last_year + (fq - 1) // 4
         fq_mod = ((fq - 1) % 4) + 1
 
-        forecasts.append(QuarterForecast(
-            period_label=f"{fy}Q{fq_mod}",
-            predicted_unit_price=int(pred),
-            confidence_low=int(max(pred - margin, 0)),
-            confidence_high=int(pred + margin),
-        ))
+        forecasts.append(
+            QuarterForecast(
+                period_label=f"{fy}Q{fq_mod}",
+                predicted_unit_price=int(pred),
+                confidence_low=int(max(pred - margin, 0)),
+                confidence_high=int(pred + margin),
+            )
+        )
 
     # History for charting
     history = []
     for q in quarter_data:
-        history.append({
-            "period": q["period"],
-            "avg_unit_price": q["avg_unit_price"],
-            "median_unit_price": q["median_unit_price"],
-            "count": q["count"],
-            "trend_line": int(
-                slope * q["index"] + intercept
-            ),
-        })
+        history.append(
+            {
+                "period": q["period"],
+                "avg_unit_price": q["avg_unit_price"],
+                "median_unit_price": q["median_unit_price"],
+                "count": q["count"],
+                "trend_line": int(slope * q["index"] + intercept),
+            }
+        )
 
     # Confidence note
     if n_total >= 100 and n_quarters >= 8:
@@ -229,6 +224,7 @@ def forecast_price_trend(
 # Internal helpers
 # ===================================================================
 
+
 def _aggregate_quarters(dataset: MLDataset) -> list[dict]:
     """Aggregate records by quarter."""
     from collections import defaultdict
@@ -246,13 +242,15 @@ def _aggregate_quarters(dataset: MLDataset) -> list[dict]:
         prices = by_q[qi]
         sp = sorted(prices)
         n = len(sp)
-        result.append({
-            "index": qi,
-            "period": q_labels.get(qi, f"Q{qi}"),
-            "avg_unit_price": int(sum(prices) / n),
-            "median_unit_price": sp[n // 2],
-            "count": n,
-        })
+        result.append(
+            {
+                "index": qi,
+                "period": q_labels.get(qi, f"Q{qi}"),
+                "avg_unit_price": int(sum(prices) / n),
+                "median_unit_price": sp[n // 2],
+                "count": n,
+            }
+        )
     return result
 
 
@@ -295,6 +293,7 @@ def _weighted_linreg(
 def _parse_period_label(label: str) -> tuple[int, int]:
     """Parse '2025年第2四半期' → (2025, 2)."""
     import re
+
     m = re.search(r"(\d{4})年第(\d)四半期", label)
     if m:
         return int(m.group(1)), int(m.group(2))

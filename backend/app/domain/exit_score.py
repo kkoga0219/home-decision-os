@@ -24,13 +24,13 @@ from dataclasses import dataclass
 # Higher weight = more impact on total score
 # -------------------------------------------------------------------
 WEIGHTS = {
-    "station": 0.25,    # 駅距離: 最重要。賃貸需要と資産価値に直結
-    "age": 0.20,        # 築年数: 耐震基準・設備・銀行融資に影響
-    "size": 0.15,       # 面積: 需要ボリュームゾーン (60-75㎡) が有利
-    "layout": 0.12,     # 間取り: 2-3LDK のファミリー向けが流動性高い
+    "station": 0.25,  # 駅距離: 最重要。賃貸需要と資産価値に直結
+    "age": 0.20,  # 築年数: 耐震基準・設備・銀行融資に影響
+    "size": 0.15,  # 面積: 需要ボリュームゾーン (60-75㎡) が有利
+    "layout": 0.12,  # 間取り: 2-3LDK のファミリー向けが流動性高い
     "liquidity": 0.10,  # 総戸数: 管理組合の安定性・修繕計画の実行力
-    "hazard": 0.10,     # ハザード: 浸水・土砂災害リスクは融資と保険に影響
-    "zoning": 0.08,     # 用途地域: 商業地域は利便性高いが騒音リスクも
+    "hazard": 0.10,  # ハザード: 浸水・土砂災害リスクは融資と保険に影響
+    "zoning": 0.08,  # 用途地域: 商業地域は利便性高いが騒音リスクも
 }
 
 
@@ -44,12 +44,13 @@ class ExitScoreResult:
     hazard_score: int
     liquidity_score: int
     total_score: int  # 0-100
-    assessment: str   # 評価コメント
+    assessment: str  # 評価コメント
 
 
 # ---------------------------------------------------------------------------
 # Individual scoring functions (each returns 0-10)
 # ---------------------------------------------------------------------------
+
 
 def score_station(walking_minutes: int | None) -> int:
     """Closer to station = higher score.
@@ -164,15 +165,15 @@ def score_zoning(zoning_type: str | None) -> int:
         return 5
     z = zoning_type
     if "近隣商業" in z:
-        return 9   # 利便性◎、住環境○
+        return 9  # 利便性◎、住環境○
     if "商業" in z:
-        return 8   # 利便性◎、騒音リスクあり
+        return 8  # 利便性◎、騒音リスクあり
     if "第一種住居" in z or "第二種住居" in z or "準住居" in z:
-        return 8   # 住環境良好
+        return 8  # 住環境良好
     if "中高層" in z:
-        return 7   # 良好だがマンション多い
+        return 7  # 良好だがマンション多い
     if "低層" in z:
-        return 6   # 閑静だが利便性△
+        return 6  # 閑静だが利便性△
     if "準工業" in z:
         return 5
     if "工業" in z:
@@ -216,6 +217,7 @@ def score_liquidity(total_units: int | None) -> int:
 # ---------------------------------------------------------------------------
 # Aggregate (weighted)
 # ---------------------------------------------------------------------------
+
 
 def calc_exit_score(
     walking_minutes: int | None = None,

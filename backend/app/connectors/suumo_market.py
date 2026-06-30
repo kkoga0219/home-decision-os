@@ -35,16 +35,16 @@ HEADERS = {
 # Format: https://suumo.jp/chintai/soba/hyogo/ek_{station_code}/
 # We store the known station codes for our target area
 RENTAL_SOBA_URLS: dict[str, str] = {
-    "塚口": "https://suumo.jp/chintai/soba/hyogo/ek_33810/",      # JR塚口
+    "塚口": "https://suumo.jp/chintai/soba/hyogo/ek_33810/",  # JR塚口
     "武庫之荘": "https://suumo.jp/chintai/soba/hyogo/ek_34440/",
     "立花": "https://suumo.jp/chintai/soba/hyogo/ek_33440/",
-    "尼崎": "https://suumo.jp/chintai/soba/hyogo/ek_33370/",       # JR尼崎
+    "尼崎": "https://suumo.jp/chintai/soba/hyogo/ek_33370/",  # JR尼崎
     "園田": "https://suumo.jp/chintai/soba/hyogo/ek_34420/",
     "西宮北口": "https://suumo.jp/chintai/soba/hyogo/ek_34460/",
     "夙川": "https://suumo.jp/chintai/soba/hyogo/ek_34350/",
     "芦屋": "https://suumo.jp/chintai/soba/hyogo/ek_33120/",
     "三宮": "https://suumo.jp/chintai/soba/hyogo/ek_33720/",
-    "伊丹": "https://suumo.jp/chintai/soba/hyogo/ek_33180/",       # JR伊丹
+    "伊丹": "https://suumo.jp/chintai/soba/hyogo/ek_33180/",  # JR伊丹
 }
 
 # SUUMO used condo market page URLs by city
@@ -162,7 +162,8 @@ def _parse_rental_soba(html: str, station_name: str) -> dict[str, Any] | None:
 
         # Family-type rent (2LDK-3LDK) for comparison
         family_rents = [
-            v for k, v in layout_rents.items()
+            v
+            for k, v in layout_rents.items()
             if k in ("2LDK", "3LDK", "2DK", "3DK", "2SLDK", "3SLDK")
         ]
         if family_rents:

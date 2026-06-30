@@ -28,7 +28,6 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from functools import lru_cache
 from typing import Any
 
 import httpx
@@ -39,15 +38,33 @@ MLIT_API_BASE = "https://www.reinfolib.mlit.go.jp/ex-api/external"
 
 # Layout category mapping for one-hot encoding
 LAYOUT_CATEGORIES = {
-    "1R": 0, "1K": 1, "1DK": 1, "1LDK": 2,
-    "2K": 3, "2DK": 3, "2LDK": 4, "2SLDK": 4,
-    "3K": 5, "3DK": 5, "3LDK": 6, "3SLDK": 6,
-    "4K": 7, "4DK": 7, "4LDK": 7, "4SLDK": 7,
+    "1R": 0,
+    "1K": 1,
+    "1DK": 1,
+    "1LDK": 2,
+    "2K": 3,
+    "2DK": 3,
+    "2LDK": 4,
+    "2SLDK": 4,
+    "3K": 5,
+    "3DK": 5,
+    "3LDK": 6,
+    "3SLDK": 6,
+    "4K": 7,
+    "4DK": 7,
+    "4LDK": 7,
+    "4SLDK": 7,
     "5LDK": 7,
 }
 LAYOUT_CAT_NAMES = [
-    "1R", "1K-1DK", "1LDK", "2K-2DK", "2LDK",
-    "3K-3DK", "3LDK", "4LDK+",
+    "1R",
+    "1K-1DK",
+    "1LDK",
+    "2K-2DK",
+    "2LDK",
+    "3K-3DK",
+    "3LDK",
+    "4LDK+",
 ]
 NUM_LAYOUT_CATS = len(LAYOUT_CAT_NAMES)  # 8
 
@@ -56,16 +73,16 @@ NUM_LAYOUT_CATS = len(LAYOUT_CAT_NAMES)  # 8
 class CleanRecord:
     """A single cleaned MLIT transaction record."""
 
-    trade_price: int          # 取引価格 (JPY)
-    unit_price: float         # ㎡単価 (JPY/㎡)
-    floor_area: float         # 面積 (㎡)
-    age_years: float          # 築年数 (at time of transaction)
-    walking_minutes: float    # 駅徒歩 (分)
-    layout_cat: int           # Layout category index
-    station_name: str         # 最寄駅
-    district: str             # 地区名
-    quarter_index: int        # Chronological quarter index (0 = oldest)
-    trade_period: str         # e.g. "2024年第3四半期"
+    trade_price: int  # 取引価格 (JPY)
+    unit_price: float  # ㎡単価 (JPY/㎡)
+    floor_area: float  # 面積 (㎡)
+    age_years: float  # 築年数 (at time of transaction)
+    walking_minutes: float  # 駅徒歩 (分)
+    layout_cat: int  # Layout category index
+    station_name: str  # 最寄駅
+    district: str  # 地区名
+    quarter_index: int  # Chronological quarter index (0 = oldest)
+    trade_period: str  # e.g. "2024年第3四半期"
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -73,12 +90,12 @@ class CleanRecord:
 class MLDataset:
     """Feature matrix + target, ready for scikit-learn."""
 
-    X: list[list[float]]           # Feature rows
-    y: list[float]                 # Target (unit_price per ㎡)
-    feature_names: list[str]       # Column names
-    records: list[CleanRecord]     # Source records (for Comps lookup)
+    X: list[list[float]]  # Feature rows
+    y: list[float]  # Target (unit_price per ㎡)
+    feature_names: list[str]  # Column names
+    records: list[CleanRecord]  # Source records (for Comps lookup)
     station_popularity: dict[str, int]  # station → transaction count
-    quarter_labels: list[str]      # Sorted unique quarter labels
+    quarter_labels: list[str]  # Sorted unique quarter labels
     n_samples: int = 0
 
     def __post_init__(self):
@@ -88,6 +105,7 @@ class MLDataset:
 # ===================================================================
 # Public API
 # ===================================================================
+
 
 async def fetch_ml_dataset(
     api_key: str,
@@ -119,21 +137,23 @@ async def fetch_ml_dataset(
     MLDataset or None if insufficient data.
     """
     raw_records = await _fetch_raw_records(
-        api_key, prefecture_code, city_code,
-        from_period, to_period,
+        api_key,
+        prefecture_code,
+        city_code,
+        from_period,
+        to_period,
     )
     if raw_records is None:
         return None
 
     # Filter to condos only
-    condo_records = [
-        r for r in raw_records
-        if "マンション" in r.get("Type", "")
-    ]
+    condo_records = [r for r in raw_records if "マンション" in r.get("Type", "")]
     if len(condo_records) < 10:
         logger.warning(
             "Only %d condo records for %s/%s, need >=10",
-            len(condo_records), prefecture_code, city_code,
+            len(condo_records),
+            prefecture_code,
+            city_code,
         )
         return None
 
@@ -162,8 +182,11 @@ async def fetch_ml_dataset_multi_city(
 
     async def _fetch_one(cc: str):
         return await _fetch_raw_records(
-            api_key, prefecture_code, cc,
-            from_period, to_period,
+            api_key,
+            prefecture_code,
+            cc,
+            from_period,
+            to_period,
         )
 
     results = await asyncio.gather(
@@ -177,9 +200,7 @@ async def fetch_ml_dataset_multi_city(
             continue
         all_raw.extend(res)
 
-    condo_records = [
-        r for r in all_raw if "マンション" in r.get("Type", "")
-    ]
+    condo_records = [r for r in all_raw if "マンション" in r.get("Type", "")]
     if len(condo_records) < 10:
         return None
 
@@ -193,6 +214,7 @@ async def fetch_ml_dataset_multi_city(
 # ===================================================================
 # Internal: API fetch
 # ===================================================================
+
 
 async def _fetch_raw_records(
     api_key: str,
@@ -230,6 +252,7 @@ async def _fetch_raw_records(
 # ===================================================================
 # Internal: Cleaning
 # ===================================================================
+
 
 def _clean_records(
     raw: list[dict],
@@ -289,19 +312,21 @@ def _clean_records(
         layout = _normalize_layout(item.get("FloorPlan", ""))
         layout_cat = LAYOUT_CATEGORIES.get(layout, 3)  # default: 2K-2DK
 
-        records.append(CleanRecord(
-            trade_price=price,
-            unit_price=unit_price,
-            floor_area=area,
-            age_years=float(age),
-            walking_minutes=float(walking),
-            layout_cat=layout_cat,
-            station_name=station,
-            district=item.get("DistrictName", ""),
-            quarter_index=period_index.get(period_str, 0),
-            trade_period=period_str,
-            raw=item,
-        ))
+        records.append(
+            CleanRecord(
+                trade_price=price,
+                unit_price=unit_price,
+                floor_area=area,
+                age_years=float(age),
+                walking_minutes=float(walking),
+                layout_cat=layout_cat,
+                station_name=station,
+                district=item.get("DistrictName", ""),
+                quarter_index=period_index.get(period_str, 0),
+                trade_period=period_str,
+                raw=item,
+            )
+        )
 
     # IQR outlier removal on unit_price
     if len(records) >= 20:
@@ -333,6 +358,7 @@ def _remove_outliers_iqr(
 # Internal: Feature engineering
 # ===================================================================
 
+
 def _build_features(records: list[CleanRecord]) -> MLDataset:
     """Transform CleanRecords into feature matrix.
 
@@ -359,10 +385,14 @@ def _build_features(records: list[CleanRecord]) -> MLDataset:
     max_quarter = max(r.quarter_index for r in records) or 1
 
     feature_names = [
-        "floor_area", "log_floor_area",
-        "age_years", "age_squared",
-        "walking_minutes", "walk_squared",
-        "age_x_walk", "quarter_norm",
+        "floor_area",
+        "log_floor_area",
+        "age_years",
+        "age_squared",
+        "walking_minutes",
+        "walk_squared",
+        "age_x_walk",
+        "quarter_norm",
         "station_popularity",
     ] + [f"layout_{name}" for name in LAYOUT_CAT_NAMES]
 
@@ -378,9 +408,9 @@ def _build_features(records: list[CleanRecord]) -> MLDataset:
             r.floor_area,
             log_area,
             r.age_years,
-            r.age_years ** 2,
+            r.age_years**2,
             r.walking_minutes,
-            r.walking_minutes ** 2,
+            r.walking_minutes**2,
             r.age_years * r.walking_minutes,
             q_norm,
             float(stn_pop),
@@ -395,7 +425,8 @@ def _build_features(records: list[CleanRecord]) -> MLDataset:
 
     # Sort quarter labels
     all_periods = sorted(
-        {r.trade_period for r in records}, key=_period_sort_key,
+        {r.trade_period for r in records},
+        key=_period_sort_key,
     )
 
     return MLDataset(
@@ -411,6 +442,7 @@ def _build_features(records: list[CleanRecord]) -> MLDataset:
 # ===================================================================
 # Parsing helpers
 # ===================================================================
+
 
 def _parse_int(v: Any) -> int | None:
     if v is None:
@@ -480,16 +512,22 @@ def _normalize_layout(raw: str) -> str:
     s = raw.strip().upper().replace("　", "").replace(" ", "")
     # Convert fullwidth chars
     for fw, hw in [
-        ("０", "0"), ("１", "1"), ("２", "2"), ("３", "3"),
-        ("４", "4"), ("５", "5"), ("Ｌ", "L"), ("Ｄ", "D"),
-        ("Ｋ", "K"), ("Ｓ", "S"), ("Ｒ", "R"),
+        ("０", "0"),
+        ("１", "1"),
+        ("２", "2"),
+        ("３", "3"),
+        ("４", "4"),
+        ("５", "5"),
+        ("Ｌ", "L"),
+        ("Ｄ", "D"),
+        ("Ｋ", "K"),
+        ("Ｓ", "S"),
+        ("Ｒ", "R"),
     ]:
         s = s.replace(fw, hw)
     # Add leading digit if missing: "LDK" → "1LDK"
     m = re.match(r"^(\d?)(.*)", s)
-    if m and m.group(1) == "" and any(
-        x in s for x in ("LDK", "DK", "K", "R")
-    ):
+    if m and m.group(1) == "" and any(x in s for x in ("LDK", "DK", "K", "R")):
         s = "1" + s
     return s
 

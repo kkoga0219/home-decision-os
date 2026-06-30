@@ -21,9 +21,9 @@ client = httpx.Client(base_url=BASE, timeout=10)
 
 def pp(label: str, data: dict | list) -> None:
     """Pretty-print API response."""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  {label}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(json.dumps(data, indent=2, ensure_ascii=False))
 
 
@@ -182,9 +182,7 @@ for ps in comparison["properties"]:
     p = ps["property"]
     loan_payment = ps["loan_scenarios"][0]["monthly_payment_jpy"] if ps["loan_scenarios"] else 0
     rental_cf = (
-        ps["rental_scenarios"][0]["monthly_net_cashflow_jpy"]
-        if ps["rental_scenarios"]
-        else 0
+        ps["rental_scenarios"][0]["monthly_net_cashflow_jpy"] if ps["rental_scenarios"] else 0
     )
     exit_score = ps["exit_score"]["total_score"] if ps["exit_score"] else "-"
     sign = "+" if rental_cf >= 0 else ""

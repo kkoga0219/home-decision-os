@@ -31,9 +31,7 @@ def get_one(property_id: int, db: Session = Depends(get_db)):
 
 @router.patch("/{property_id}", response_model=PropertyRead)
 def update(property_id: int, body: PropertyUpdate, db: Session = Depends(get_db)):
-    updated = property_repo.update_property(
-        db, property_id, **body.model_dump(exclude_unset=True)
-    )
+    updated = property_repo.update_property(db, property_id, **body.model_dump(exclude_unset=True))
     if updated is None:
         raise HTTPException(404, "Property not found")
     return updated

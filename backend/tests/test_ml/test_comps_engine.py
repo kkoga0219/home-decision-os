@@ -1,6 +1,6 @@
 """Tests for comparable transaction analysis engine."""
 
-from app.ml.comps_engine import CompTransaction, CompsResult, find_comps
+from app.ml.comps_engine import CompsResult, find_comps
 from app.ml.data_pipeline import CleanRecord, MLDataset
 
 
@@ -37,9 +37,8 @@ class TestFindComps:
         records = [_make_record() for _ in range(3)]
         ds = _make_dataset(records)
         result = find_comps(ds, floor_area=65.0, age_years=15.0, walking_minutes=7.0)
-        # With only 3 records and hard filters, should still find comps
-        # (they are identical), so it should return a result
-        assert result is not None
+        # Fewer than the minimum sample size (5) → not enough data → None.
+        assert result is None
 
     def test_insufficient_data(self):
         records = [_make_record() for _ in range(2)]
@@ -101,10 +100,7 @@ class TestFindComps:
 
     def test_hard_filter_area(self):
         """Records too far in area should be excluded."""
-        records = [
-            _make_record(floor_area=120.0, unit_price=300_000.0)
-            for _ in range(10)
-        ]
+        records = [_make_record(floor_area=120.0, unit_price=300_000.0) for _ in range(10)]
         ds = _make_dataset(records)
         result = find_comps(
             ds,
@@ -118,14 +114,19 @@ class TestFindComps:
     def test_similarity_ordering(self):
         """More similar records should rank higher."""
         records = [
-            _make_record(floor_area=65.0, age_years=15.0, walking_minutes=7.0,
-                         quarter_index=12),  # Identical
-            _make_record(floor_area=80.0, age_years=25.0, walking_minutes=15.0,
-                         quarter_index=1),  # Very different
+            _make_record(
+                floor_area=65.0, age_years=15.0, walking_minutes=7.0, quarter_index=12
+            ),  # Identical
+            _make_record(
+                floor_area=80.0, age_years=25.0, walking_minutes=15.0, quarter_index=1
+            ),  # Very different
         ] * 3  # Need at least 3 records after filtering
         ds = _make_dataset(records)
         result = find_comps(
-            ds, floor_area=65.0, age_years=15.0, walking_minutes=7.0,
+            ds,
+            floor_area=65.0,
+            age_years=15.0,
+            walking_minutes=7.0,
         )
         assert result is not None
         # First comp should be more similar

@@ -13,23 +13,23 @@ import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-logger = logging.getLogger(__name__)
-
 from app.config import settings
 from app.connectors.area_stats import AreaStatsConnector
+from app.connectors.athome_search import AthomeSearchConnector
 from app.connectors.enrichment import enrich_from_property_data, enrich_from_url
+from app.connectors.homes_search import HomesSearchConnector
 from app.connectors.mlit_transaction import (
     MLITTransactionConnector,
     city_name_to_code,
     prefecture_name_to_code,
     station_stats_to_area_data,
 )
-from app.connectors.athome_search import AthomeSearchConnector
-from app.connectors.homes_search import HomesSearchConnector
 from app.connectors.rent_estimator import RentEstimatorConnector
 from app.connectors.suumo_market import SuumoMarketConnector
 from app.connectors.suumo_search import SuumoSearchConnector
 from app.connectors.url_preview import URLPreviewConnector
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/connectors", tags=["connectors"])
 
@@ -37,6 +37,7 @@ router = APIRouter(prefix="/connectors", tags=["connectors"])
 # ===================================================================
 # Integrated Enrichment (main entry point for frontend)
 # ===================================================================
+
 
 class EnrichFromURLRequest(BaseModel):
     url: str = Field(..., min_length=1)
@@ -81,6 +82,7 @@ async def enrich_data(body: EnrichFromDataRequest):
 # Area Search (SUUMO listings + enrichment)
 # ===================================================================
 
+
 class AreaSearchRequest(BaseModel):
     station_name: str = ""
     city_name: str = ""
@@ -97,10 +99,12 @@ class AreaSearchRequest(BaseModel):
         description="間取り (1K,1LDK,2LDK,3LDK,4LDK など)",
     )
     walking_max: int | None = Field(
-        default=None, description="徒歩分数上限",
+        default=None,
+        description="徒歩分数上限",
     )
     age_max: int | None = Field(
-        default=None, description="築年数上限",
+        default=None,
+        description="築年数上限",
     )
     stations: list[str] = Field(
         default_factory=list,
@@ -122,9 +126,15 @@ async def area_search(body: AreaSearchRequest):
     import asyncio
     import datetime
 
-    sources = [s.lower() for s in body.sources] if body.sources else [
-        "suumo", "homes", "athome",
-    ]
+    sources = (
+        [s.lower() for s in body.sources]
+        if body.sources
+        else [
+            "suumo",
+            "homes",
+            "athome",
+        ]
+    )
 
     # --- 1. Fetch listings from all requested sources concurrently ---
     search_kwargs: dict = dict(
@@ -199,7 +209,9 @@ async def area_search(body: AreaSearchRequest):
         )
 
     area_result, market_raw = await asyncio.gather(
-        area_coro, _fetch_market(), return_exceptions=True,
+        area_coro,
+        _fetch_market(),
+        return_exceptions=True,
     )
 
     rental_market_data = None
@@ -227,24 +239,27 @@ async def area_search(body: AreaSearchRequest):
         current_year=datetime.date.today().year,
     )
     logger.info(
-        "Post-filter: %d → %d listings", total_before_filter, len(listings),
+        "Post-filter: %d → %d listings",
+        total_before_filter,
+        len(listings),
     )
 
     # --- 4. ML Valuation (MLIT-based, if API key available) ---
-    ml_valuation_data = None
     hedonic_model = None
     ml_dataset = None
     ml_cap_rates = None
     try:
         if settings.mlit_api_key:
-            from app.ml.valuation_engine import run_valuation
+            from app.connectors.mlit_transaction import (
+                city_name_to_code as _cnc,
+            )
+            from app.connectors.mlit_transaction import (
+                prefecture_name_to_code as _pnc,
+            )
             from app.ml.data_pipeline import fetch_ml_dataset
             from app.ml.hedonic_model import train_hedonic_model
             from app.ml.rent_model import calibrate_cap_rates
-            from app.connectors.mlit_transaction import (
-                prefecture_name_to_code as _pnc,
-                city_name_to_code as _cnc,
-            )
+
             pref_code = _pnc(body.prefecture)
             city_code = _cnc(body.city_name) if body.city_name else ""
             # Infer from station name if not resolved
@@ -252,6 +267,7 @@ async def area_search(body: AreaSearchRequest):
                 from app.connectors.enrichment import (
                     _infer_location_from_station,
                 )
+
                 inferred = _infer_location_from_station(body.station_name)
                 if inferred:
                     pref_code = inferred[0]
@@ -261,18 +277,26 @@ async def area_search(body: AreaSearchRequest):
                 pref_code = ""  # Skip ML if we can't determine location
             if pref_code:
                 ml_dataset = await fetch_ml_dataset(
-                    settings.mlit_api_key, pref_code, city_code,
+                    settings.mlit_api_key,
+                    pref_code,
+                    city_code,
                     station_name=body.station_name,
                 )
             if ml_dataset and ml_dataset.n_samples >= 15:
                 hedonic_model = train_hedonic_model(ml_dataset)
                 pref_yield = {
-                    "東京都": 0.042, "神奈川県": 0.048,
-                    "大阪府": 0.050, "京都府": 0.050,
-                    "愛知県": 0.052, "兵庫県": 0.055,
-                    "千葉県": 0.055, "埼玉県": 0.055,
-                    "福岡県": 0.055, "北海道": 0.060,
-                    "宮城県": 0.058, "広島県": 0.056,
+                    "東京都": 0.042,
+                    "神奈川県": 0.048,
+                    "大阪府": 0.050,
+                    "京都府": 0.050,
+                    "愛知県": 0.052,
+                    "兵庫県": 0.055,
+                    "千葉県": 0.055,
+                    "埼玉県": 0.055,
+                    "福岡県": 0.055,
+                    "北海道": 0.060,
+                    "宮城県": 0.058,
+                    "広島県": 0.056,
                 }.get(body.prefecture, 0.058)
                 ml_cap_rates = calibrate_cap_rates(
                     ml_dataset,
@@ -287,18 +311,11 @@ async def area_search(body: AreaSearchRequest):
     rent_connector = RentEstimatorConnector()
 
     area_ok = area_result and not isinstance(area_result, Exception)
-    pref_str = (
-        area_result.data.get("prefecture", "")
-        if area_ok and area_result.success else ""
-    )
+    pref_str = area_result.data.get("prefecture", "") if area_ok and area_result.success else ""
     area_avg_unit = (
-        area_result.data.get("avg_unit_price_sqm")
-        if area_ok and area_result.success else None
+        area_result.data.get("avg_unit_price_sqm") if area_ok and area_result.success else None
     )
-    avg_70 = (
-        area_result.data.get("avg_price_70sqm", 0)
-        if area_ok and area_result.success else 0
-    )
+    avg_70 = area_result.data.get("avg_price_70sqm", 0) if area_ok and area_result.success else 0
 
     for listing in listings:
         price = listing.get("price_jpy")
@@ -308,11 +325,9 @@ async def area_search(body: AreaSearchRequest):
             if ml_cap_rates:
                 try:
                     from app.ml.rent_model import estimate_rent_ml
+
                     built_yr = listing.get("built_year")
-                    age = (
-                        datetime.date.today().year - built_yr
-                        if built_yr else 15
-                    )
+                    age = datetime.date.today().year - built_yr if built_yr else 15
                     ml_rent = estimate_rent_ml(
                         ml_cap_rates,
                         price_jpy=price,
@@ -323,7 +338,8 @@ async def area_search(body: AreaSearchRequest):
                         ),
                         layout=listing.get("layout", ""),
                         station_name=listing.get(
-                            "station_name", "",
+                            "station_name",
+                            "",
                         ),
                     )
                     listing["estimated_rent"] = ml_rent.estimated_rent
@@ -348,15 +364,9 @@ async def area_search(body: AreaSearchRequest):
                         rental_market_data=rental_market_data,
                     )
                     if rent_result.success:
-                        listing["estimated_rent"] = (
-                            rent_result.data["estimated_rent"]
-                        )
-                        listing["gross_yield"] = (
-                            rent_result.data["gross_yield"]
-                        )
-                        listing["rent_confidence"] = (
-                            rent_result.data.get("confidence", "low")
-                        )
+                        listing["estimated_rent"] = rent_result.data["estimated_rent"]
+                        listing["gross_yield"] = rent_result.data["gross_yield"]
+                        listing["rent_confidence"] = rent_result.data.get("confidence", "low")
                 except Exception:
                     pass
 
@@ -364,10 +374,7 @@ async def area_search(body: AreaSearchRequest):
             if hedonic_model:
                 try:
                     built_yr = listing.get("built_year")
-                    age = (
-                        datetime.date.today().year - built_yr
-                        if built_yr else 15
-                    )
+                    age = datetime.date.today().year - built_yr if built_yr else 15
                     pred = hedonic_model.predict(
                         floor_area=listing.get("floor_area_sqm", 65),
                         age_years=float(age),
@@ -376,13 +383,12 @@ async def area_search(body: AreaSearchRequest):
                         ),
                         layout=listing.get("layout", ""),
                         station_name=listing.get(
-                            "station_name", "",
+                            "station_name",
+                            "",
                         ),
                         listing_price=price,
                     )
-                    listing["ml_fair_price"] = (
-                        pred.predicted_total_price
-                    )
+                    listing["ml_fair_price"] = pred.predicted_total_price
                     listing["ml_deviation_pct"] = pred.deviation_pct
                     listing["ml_assessment"] = pred.assessment
                     listing["vs_market_pct"] = pred.deviation_pct
@@ -393,15 +399,16 @@ async def area_search(body: AreaSearchRequest):
             # Fallback: simple area average comparison
             if "vs_market_pct" not in listing and avg_70 > 0:
                 area_sqm = listing.get("floor_area_sqm", 70)
-                normalized = (
-                    price * 70 / area_sqm if area_sqm else price
-                )
+                normalized = price * 70 / area_sqm if area_sqm else price
                 diff = round((normalized / avg_70 - 1) * 100, 1)
                 listing["vs_market_pct"] = diff
                 listing["vs_market"] = (
-                    "割安" if diff < -10
-                    else "相場並み" if diff < 10
-                    else "やや割高" if diff < 20
+                    "割安"
+                    if diff < -10
+                    else "相場並み"
+                    if diff < 10
+                    else "やや割高"
+                    if diff < 20
                     else "割高"
                 )
 
@@ -411,10 +418,7 @@ async def area_search(body: AreaSearchRequest):
         all_errors.extend(area_result.errors)
 
     # Primary search URL: prefer SUUMO, fallback to first available
-    primary_url = (
-        search_urls.get("suumo")
-        or next(iter(search_urls.values()), "")
-    )
+    primary_url = search_urls.get("suumo") or next(iter(search_urls.values()), "")
 
     return {
         "success": any_success,
@@ -423,26 +427,14 @@ async def area_search(body: AreaSearchRequest):
         "total_found": len(enriched_listings),
         "total_before_filter": total_before_filter,
         "listings": enriched_listings,
-        "area_stats": (
-            area_result.data
-            if area_ok and area_result.success else None
-        ),
+        "area_stats": (area_result.data if area_ok and area_result.success else None),
         "suumo_market": suumo_market_data,
         "ml_model_info": {
             "hedonic_available": hedonic_model is not None,
-            "hedonic_r2": (
-                hedonic_model.r2_score if hedonic_model else None
-            ),
-            "hedonic_mape": (
-                hedonic_model.mape if hedonic_model else None
-            ),
-            "dataset_size": (
-                ml_dataset.n_samples if ml_dataset else 0
-            ),
-            "rent_calibration": (
-                ml_cap_rates.calibration_quality
-                if ml_cap_rates else None
-            ),
+            "hedonic_r2": (hedonic_model.r2_score if hedonic_model else None),
+            "hedonic_mape": (hedonic_model.mape if hedonic_model else None),
+            "dataset_size": (ml_dataset.n_samples if ml_dataset else 0),
+            "rent_calibration": (ml_cap_rates.calibration_quality if ml_cap_rates else None),
         },
         "errors": all_errors,
     }
@@ -510,6 +502,7 @@ def _apply_filters(
 
 # --- URL Preview ---
 
+
 class URLPreviewRequest(BaseModel):
     url: str = Field(..., min_length=1)
 
@@ -529,6 +522,7 @@ async def url_preview(body: URLPreviewRequest):
 
 
 # --- Area Statistics ---
+
 
 class AreaStatsRequest(BaseModel):
     station_name: str = ""
@@ -588,6 +582,7 @@ async def area_stats(body: AreaStatsRequest):
 
 # --- MLIT Station Stats (detailed) ---
 
+
 class MLITStationStatsRequest(BaseModel):
     station_name: str = ""
     city_name: str = ""
@@ -642,6 +637,7 @@ async def mlit_station_stats(body: MLITStationStatsRequest):
 
 # --- Market Data (MLIT) ---
 
+
 class MarketDataRequest(BaseModel):
     prefecture_code: str = Field(..., min_length=2, max_length=2)
     city_code: str = ""
@@ -688,6 +684,7 @@ async def market_data(body: MarketDataRequest):
 
 
 # --- Rent Estimation ---
+
 
 class RentEstimateRequest(BaseModel):
     price_jpy: int = Field(..., gt=0)
@@ -737,6 +734,7 @@ async def rent_estimate(body: RentEstimateRequest):
 # ML Valuation Engine (MLIT-based)
 # ===================================================================
 
+
 class ValuationRequest(BaseModel):
     price_jpy: int = Field(..., gt=0, description="物件価格 (円)")
     floor_area_sqm: float = Field(default=65.0, description="面積 (㎡)")
@@ -751,6 +749,7 @@ class ValuationRequest(BaseModel):
 # ===================================================================
 # 塚口 New-Listing Alert (LINE notification)
 # ===================================================================
+
 
 class TsukaguchiAlertRequest(BaseModel):
     sources: list[str] = Field(

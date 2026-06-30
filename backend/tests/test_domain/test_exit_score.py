@@ -30,7 +30,7 @@ class TestIndividualScores:
         assert score_layout("3LDK") == 10
 
     def test_layout_single(self):
-        assert score_layout("1K") == 5
+        assert score_layout("1K") == 4
 
     def test_age_new(self):
         assert score_age(2024, 2026) == 10

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -62,16 +63,21 @@ async def gather_candidates(
     assume_unknown_is_hankyu: bool = False,
     use_browser: bool = True,
     min_rooms: int = 3,
+    mansion_min_built_year: int = 1981,
 ) -> list[dict[str, Any]]:
     """Search all sources/types and return qualifying listings.
 
-    The returned listings are de-duplicated by listing key and annotated
-    with ``source``, ``property_type``, ``property_type_label`` and
-    ``match_reason``. No state / notification side effects.
+    Results are de-duplicated by listing key, grouped so same-building /
+    same-room duplicates collapse into one entry, and annotated with
+    ``source``, ``property_type``, ``property_type_label``, ``match_reason``,
+    ``group_members`` / ``group_size`` / ``group_urls``. No state /
+    notification side effects.
 
     ``use_browser`` enables the Playwright fallback for SUUMO / athome (see
     ``browser_fetch``); it is ignored gracefully if Playwright is not
     installed. ``min_rooms`` filters by layout (3 → 3LDK 以上).
+    ``mansion_min_built_year`` drops mansions built before that year
+    (houses exempt); set to 0 to disable.
     """
     srcs = [s.lower() for s in (sources or ["suumo", "homes", "athome"])]
 
@@ -123,13 +129,108 @@ async def gather_candidates(
         )
         if not verdict.qualifies:
             continue
+        # Age filter: drop mansions built in/before mansion_min_built_year-1.
+        if not _passes_age_filter(ptype, listing, mansion_min_built_year):
+            continue
         listing.setdefault("source", _source_of(result))
         listing["property_type"] = ptype
         listing["property_type_label"] = _TYPE_LABEL[ptype]
         listing["match_reason"] = verdict.reason
         qualifying[listing_key(listing)] = listing
 
-    return list(qualifying.values())
+    # Collapse same-building / same-room duplicates (often the same unit
+    # listed by several brokers under different nc_ IDs).
+    return _group_listings(list(qualifying.values()))
+
+
+def _passes_age_filter(
+    ptype: str,
+    listing: dict[str, Any],
+    mansion_min_built_year: int,
+) -> bool:
+    """Mansions older than the cutoff are excluded; houses are exempt.
+
+    Listings with an unknown build year are kept (rare for SUUMO mansions),
+    to avoid silently dropping good properties we simply failed to parse.
+    """
+    if ptype != "mansion" or mansion_min_built_year <= 0:
+        return True
+    built = listing.get("built_year")
+    if built is None:
+        return True
+    return built >= mansion_min_built_year
+
+
+# ---------------------------------------------------------------------------
+# Grouping: same building + same room (price/layout) → one entry
+# ---------------------------------------------------------------------------
+
+
+def _norm_name(name: str) -> str:
+    """Normalise a building name for grouping (width + spaces + 棟番号)."""
+    s = (name or "").translate(
+        str.maketrans(
+            "０１２３４５６７８９ＡＢＣＤＥ　",
+            "0123456789ABCDE ",
+        )
+    )
+    # Drop floor/price noise SUUMO sometimes appends to house "names".
+    s = re.sub(r"\s+", "", s)
+    return s
+
+
+def _group_key(ls: dict[str, Any]) -> tuple:
+    """Listings sharing this key are treated as the same room."""
+    return (
+        _norm_name(ls.get("name", "")),
+        (ls.get("layout") or "").strip(),
+        ls.get("price_jpy"),
+    )
+
+
+def _group_state_key(ls: dict[str, Any]) -> str:
+    """Persistent dedup key for a building+room across runs.
+
+    Unlike the per-listing URL, this is stable across the different broker
+    listings (different nc_ IDs) of the SAME room — so e.g. メゾンローズ塚口
+    1680万円 3LDK is notified once, not every time a new broker re-lists it.
+    """
+    name, layout, price = _group_key(ls)
+    return f"grp:{name}|{layout}|{price}"
+
+
+def _group_listings(listings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse duplicate listings of the same building+room into one.
+
+    The representative is the member with the shortest 阪急塚口 walk (falls
+    back to first). Every member (incl. its URL) is kept on the rep under
+    ``group_members`` so the alert can mark them all as seen and list the
+    duplicate URLs.
+    """
+    groups: dict[tuple, list[dict[str, Any]]] = {}
+    order: list[tuple] = []
+    for ls in listings:
+        key = _group_key(ls)
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(ls)
+
+    reps: list[dict[str, Any]] = []
+    for key in order:
+        members = groups[key]
+
+        def _walk(ls: dict[str, Any]) -> int:
+            wm = re.search(r"(\d+)", ls.get("match_reason", "") or "")
+            return int(wm.group(1)) if wm else 999
+
+        rep = min(members, key=_walk)
+        rep = dict(rep)  # shallow copy so we don't mutate the stored dict
+        rep["group_members"] = members
+        rep["group_size"] = len(members)
+        rep["group_urls"] = [m.get("url", "") for m in members if m.get("url")]
+        reps.append(rep)
+    return reps
 
 
 # Address-based trigger: 町 names within plausible walking distance of
@@ -232,6 +333,7 @@ async def run_tsukaguchi_alert(
     assume_unknown_is_hankyu: bool = False,
     use_browser: bool = True,
     min_rooms: int = 3,
+    mansion_min_built_year: int = 1981,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Run the full alert pipeline and (optionally) push to LINE.
@@ -244,13 +346,30 @@ async def run_tsukaguchi_alert(
         assume_unknown_is_hankyu=assume_unknown_is_hankyu,
         use_browser=use_browser,
         min_rooms=min_rooms,
+        mansion_min_built_year=mansion_min_built_year,
     )
 
+    # A grouped candidate is "new" only if its BUILDING+ROOM key is unseen.
+    # Keying on the group (not the URL) means a different broker re-listing
+    # the same room under a new nc_ID won't re-notify (the メゾンローズ問題).
     state = AlertState.load(state_path)
-    new_listings = [ls for ls in candidates if state.is_new(ls)]
+
+    def _group_is_new(rep: dict[str, Any]) -> bool:
+        return not state.is_seen_key(_group_state_key(rep))
+
+    new_listings = [ls for ls in candidates if _group_is_new(ls)]
 
     notify = new_listings[:_MAX_NOTIFY]
     truncated = len(new_listings) - len(notify)
+
+    def _mark_all(reps: list[dict[str, Any]]) -> None:
+        # Mark the group key (so any broker's re-listing of the same room is
+        # suppressed) plus every member URL (belt-and-suspenders).
+        for rep in reps:
+            state.add_key(_group_state_key(rep))
+            for m in rep.get("group_members") or [rep]:
+                state.mark(m)
+        state.save(state_path)
 
     errors: list[str] = []
     sent = 0
@@ -266,14 +385,10 @@ async def run_tsukaguchi_alert(
         # Only remember listings we actually attempted to notify about,
         # so a send failure can be retried on the next run.
         if line_result.success:
-            for ls in notify:
-                state.mark(ls)
-            state.save(state_path)
+            _mark_all(notify)
     elif notify and dry_run:
-        for ls in notify:
-            state.mark(ls)
         # In dry-run we still persist so repeated dry-runs are quiet.
-        state.save(state_path)
+        _mark_all(notify)
 
     return {
         "candidates": len(candidates),
@@ -304,12 +419,21 @@ def _format_listing(ls: dict[str, Any]) -> str:
     )
     if price:
         lines.append(f"💰 {price}")
+    if ls.get("built_year"):
+        lines.append(f"🏗 {ls['built_year']}年築")
     if ls.get("match_reason"):
         lines.append(f"🚉 {ls['match_reason']}")
     if ls.get("address"):
         lines.append(f"📍 {ls['address']}")
     if ls.get("url"):
         lines.append(f"🔗 {ls['url']}")
+    # Grouped duplicates (same building + same room, multiple brokers).
+    extra_urls = [u for u in ls.get("group_urls", []) if u != ls.get("url")]
+    if extra_urls:
+        lines.append(f"🏘 同建物・同条件の別掲載 {len(extra_urls)}件:")
+        lines.extend(f"   {u}" for u in extra_urls[:6])
+        if len(extra_urls) > 6:
+            lines.append(f"   ほか{len(extra_urls) - 6}件")
     return "\n".join(lines)
 
 

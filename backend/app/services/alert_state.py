@@ -49,7 +49,14 @@ class AlertState:
         return listing_key(listing) not in self._seen
 
     def mark(self, listing: dict[str, Any]) -> None:
-        key = listing_key(listing)
+        self.add_key(listing_key(listing))
+
+    # Low-level key access — used for group-level dedup (same building +
+    # room listed by several brokers under different URLs).
+    def is_seen_key(self, key: str) -> bool:
+        return key in self._seen
+
+    def add_key(self, key: str) -> None:
         if key not in self._seen:
             self._seen[key] = _dt.datetime.now(_dt.UTC).isoformat()
 

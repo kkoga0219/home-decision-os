@@ -771,6 +771,10 @@ class TsukaguchiAlertRequest(BaseModel):
         ge=1,
         description="最低部屋数（3 → 3LDK以上）",
     )
+    mansion_min_built_year: int = Field(
+        default=1981,
+        description="マンションの築年下限（1981 → 新耐震基準。それ以前を除外）。0で無効",
+    )
     dry_run: bool = Field(
         default=False,
         description="LINE送信せず判定結果のみ返す（既読状態は更新）",
@@ -805,6 +809,7 @@ async def run_tsukaguchi_alert_endpoint(body: TsukaguchiAlertRequest):
         assume_unknown_is_hankyu=body.assume_unknown_is_hankyu,
         use_browser=body.use_browser,
         min_rooms=body.min_rooms,
+        mansion_min_built_year=body.mansion_min_built_year,
         dry_run=body.dry_run,
     )
 

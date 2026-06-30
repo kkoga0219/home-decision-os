@@ -69,6 +69,14 @@ _CITY_SLUGS: dict[str, tuple[str, str]] = {
     "仙台市": ("miyagi", "sendai-city"),
 }
 
+# Station → athome (prefecture_slug, [station_slugs]). athome splits 塚口
+# into two station pages: tsukaguchi-st (阪急塚口) and tsukaguchi2-st
+# (JR塚口). Searching by station keeps the relevant listings on page 1 —
+# the 尼崎市 city list buries 塚口 houses past athome's anti-bot page limit.
+_STATION_SLUGS: dict[str, tuple[str, list[str]]] = {
+    "塚口": ("hyogo", ["tsukaguchi-st", "tsukaguchi2-st"]),
+}
+
 # Prefecture slugs for athome
 _PREF_SLUGS: dict[str, str] = {
     "北海道": "hokkaido",
@@ -112,13 +120,13 @@ class AthomeSearchConnector(BaseConnector):
             prices are JS-rendered, so this also auto-falls back to the
             browser when the HTTP response lacks listing markup.
         """
-        base_url = self._resolve_url(
+        base_urls = self._resolve_base_urls(
             station_name=station_name,
             city_name=city_name,
             prefecture=prefecture,
             property_type=property_type,
         )
-        if not base_url:
+        if not base_urls:
             return ConnectorResult(
                 success=False,
                 source=self.name,
@@ -126,6 +134,7 @@ class AthomeSearchConnector(BaseConnector):
             )
 
         all_listings: list[dict[str, Any]] = []
+        seen_urls: set[str] = set()
         errors: list[str] = []
 
         from app.config import settings
@@ -144,31 +153,38 @@ class AthomeSearchConnector(BaseConnector):
                 # subsequent list request through over plain HTTP.
                 await self._warm_up(client, errors)
 
-                for page in range(1, max_pages + 1):
-                    if page == 1:
-                        url = base_url
-                    else:
-                        sep = "&" if "?" in base_url else "?"
-                        url = f"{base_url}{sep}page={page}"
+                for base_url in base_urls:
+                    for page in range(1, max_pages + 1):
+                        if page == 1:
+                            url = base_url
+                        else:
+                            sep = "&" if "?" in base_url else "?"
+                            url = f"{base_url}{sep}page={page}"
 
-                    # Add per-page delay to avoid rate-limiting
-                    if page > 1:
-                        await asyncio.sleep(1.0)
+                        # Add per-page delay to avoid rate-limiting
+                        if page > 1:
+                            await asyncio.sleep(1.0)
 
-                    html = await self._get_page_html(
-                        client,
-                        url,
-                        page,
-                        errors,
-                        use_browser,
-                    )
-                    if html is None:
-                        break
+                        html = await self._get_page_html(
+                            client,
+                            url,
+                            page,
+                            errors,
+                            use_browser,
+                        )
+                        if html is None:
+                            break
 
-                    listings = _parse_athome_page(html, property_type)
-                    if not listings:
-                        break
-                    all_listings.extend(listings)
+                        listings = _parse_athome_page(html, property_type)
+                        if not listings:
+                            break
+                        for ls in listings:
+                            u = ls.get("url", "")
+                            if u and u in seen_urls:
+                                continue
+                            if u:
+                                seen_urls.add(u)
+                            all_listings.append(ls)
 
         except Exception as e:
             logger.error("athome search error: %s", e)
@@ -182,7 +198,7 @@ class AthomeSearchConnector(BaseConnector):
             success=True,
             source=self.name,
             data={
-                "search_url": base_url,
+                "search_url": base_urls[0],
                 "total_found": len(all_listings),
                 "listings": all_listings,
             },
@@ -286,31 +302,43 @@ class AthomeSearchConnector(BaseConnector):
         return None
 
     @staticmethod
-    def _resolve_url(
+    def _resolve_base_urls(
         station_name: str = "",
         city_name: str = "",
         prefecture: str = "",
         property_type: str = "mansion",
-    ) -> str | None:
+    ) -> list[str]:
+        """Return one or more athome list URLs to search.
+
+        For stations we know (e.g. 塚口 → 阪急/JR station pages) we return
+        per-station URLs, which keep the relevant listings on page 1 and
+        avoid athome's anti-bot deep-pagination limit. Otherwise we fall
+        back to a single city / prefecture / keyword URL.
+        """
         # 中古マンション → /mansion/chuko   中古戸建て → /kodate/chuko
         kind = "kodate" if property_type == "house" else "mansion"
         base = f"https://www.athome.co.jp/{kind}/chuko"
 
+        # Station lookup (preferred): per-line station pages.
+        if station_name and station_name in _STATION_SLUGS:
+            pref, slugs = _STATION_SLUGS[station_name]
+            return [f"{base}/{pref}/{slug}/list/" for slug in slugs]
+
         # City lookup
         if city_name and city_name in _CITY_SLUGS:
             pref, city = _CITY_SLUGS[city_name]
-            return f"{base}/{pref}/{city}/list/"
+            return [f"{base}/{pref}/{city}/list/"]
 
         # Prefecture + keyword
         pref_slug = _PREF_SLUGS.get(prefecture, "")
         keyword = station_name or city_name
         if pref_slug and keyword:
-            return f"{base}/{pref_slug}/list/?keyword={quote(keyword)}"
+            return [f"{base}/{pref_slug}/list/?keyword={quote(keyword)}"]
         if pref_slug:
-            return f"{base}/{pref_slug}/list/"
+            return [f"{base}/{pref_slug}/list/"]
         if keyword:
-            return f"{base}/list/?keyword={quote(keyword)}"
-        return None
+            return [f"{base}/list/?keyword={quote(keyword)}"]
+        return []
 
 
 # -------------------------------------------------------------------
@@ -442,6 +470,15 @@ def _parse_bukken(
         am = re.search(r"([\d.]+)\s*m", area_info.get("area", ""))
         if am:
             info["floor_area_sqm"] = float(am.group(1))
+
+    # Build year — from bukkenInfo.chikunengetsu, e.g. "1969年3月（築57年4ヶ月）".
+    bukken_info = item.get("bukkenInfo")
+    if isinstance(bukken_info, dict):
+        chiku = bukken_info.get("chikunengetsu", "")
+        ym = re.search(r"(\d{4})年", chiku)
+        if ym:
+            info["built_year"] = int(ym.group(1))
+            info["built_date"] = chiku
 
     if "price_jpy" in info or "name" in info:
         return info

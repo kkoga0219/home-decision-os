@@ -39,6 +39,7 @@ jobs:
       HDOS_ALERT_STATE_PATH: .alert_state/tsukaguchi_seen.json
       HDOS_ALERT_MIN_ROOMS: "3"
       HDOS_ALERT_MANSION_MIN_BUILT_YEAR: "1981"
+      HDOS_ALERT_HOUSE_WALK_MAX: "12"
       HDOS_MYLIST_PATH: ../mylist.txt
       HDOS_MYLIST_SNAPSHOTS_PATH: .alert_state/mylist_snapshots.json
       # Optional: set a residential proxy secret if athome/SUUMO block the

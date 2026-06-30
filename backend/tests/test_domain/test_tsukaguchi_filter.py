@@ -100,6 +100,22 @@ class TestUnknownOperator:
         assert not evaluate_access("塚口駅 徒歩12分", assume_unknown_is_hankyu=True).qualifies
 
 
+class TestCustomThreshold:
+    """中古戸建て widens the 阪急塚口 primary threshold to 12 min."""
+
+    def test_default_10_rejects_12(self):
+        assert not evaluate_access("阪急神戸線「塚口」徒歩12分").qualifies
+
+    def test_house_threshold_12_accepts_12(self):
+        r = evaluate_access("阪急神戸線「塚口」徒歩12分", hankyu_primary_max=12)
+        assert r.qualifies
+        assert "≤12分" in r.reason
+
+    def test_house_threshold_12_rejects_13(self):
+        # 13 min with no JR/猪名寺 → still out even at the wider threshold.
+        assert not evaluate_access("阪急神戸線「塚口」徒歩13分", hankyu_primary_max=12).qualifies
+
+
 class TestInaderaAlternative:
     """Rule B accepts 猪名寺 as a substitute for JR塚口."""
 

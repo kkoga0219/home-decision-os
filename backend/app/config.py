@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     # 1981 → keeps 新耐震基準 (1981-) and drops older mansions. 0 disables.
     alert_mansion_min_built_year: int = 1981
 
+    # Rule (A) 阪急塚口 walk threshold for 中古戸建て (mansions stay at 10).
+    alert_house_walk_max: int = 12
+
     # My-list watcher: file (committed) of URLs to track for price /
     # availability changes, and where to persist their snapshots.
     mylist_path: str = "mylist.txt"

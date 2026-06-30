@@ -172,12 +172,19 @@ def parse_tsukaguchi_access(access: str) -> TsukaguchiAccess:
 def evaluate_access(
     access: str,
     *,
+    hankyu_primary_max: int = HANKYU_PRIMARY_MAX,
+    both_max: int = BOTH_MAX,
     assume_unknown_is_hankyu: bool = False,
 ) -> QualificationResult:
     """Evaluate the qualification rule against an access string.
 
     Parameters
     ----------
+    hankyu_primary_max :
+        Rule (A) threshold — 阪急塚口 walk minutes (default 10). Widened for
+        中古戸建て (e.g. 12) via the caller.
+    both_max :
+        Rule (B) threshold — 阪急塚口 and JR塚口/猪名寺 walk minutes (default 15).
     assume_unknown_is_hankyu :
         OFF by default. All three portals (SUUMO / HOME'S / athome) print
         the rail operator next to the station name, so "operator unknown"
@@ -190,18 +197,18 @@ def evaluate_access(
     jr = parsed.jr
     inadera = parsed.inadera
 
-    # Rule (A): 阪急塚口 within 10 minutes.
-    if hankyu is not None and hankyu <= HANKYU_PRIMARY_MAX:
+    # Rule (A): 阪急塚口 within the primary threshold.
+    if hankyu is not None and hankyu <= hankyu_primary_max:
         return QualificationResult(
             True,
-            f"阪急塚口 徒歩{hankyu}分 (≤{HANKYU_PRIMARY_MAX}分)",
+            f"阪急塚口 徒歩{hankyu}分 (≤{hankyu_primary_max}分)",
             parsed,
         )
 
-    # Rule (B): 阪急塚口 ≤15 AND (JR塚口 ≤15 OR 猪名寺 ≤15).
-    if hankyu is not None and hankyu <= BOTH_MAX:
-        jr_ok = jr is not None and jr <= BOTH_MAX
-        ina_ok = inadera is not None and inadera <= BOTH_MAX
+    # Rule (B): 阪急塚口 ≤both_max AND (JR塚口 ≤both_max OR 猪名寺 ≤both_max).
+    if hankyu is not None and hankyu <= both_max:
+        jr_ok = jr is not None and jr <= both_max
+        ina_ok = inadera is not None and inadera <= both_max
         if jr_ok or ina_ok:
             # Choose the closer of JR塚口/猪名寺 for the message.
             if jr_ok and (not ina_ok or jr <= inadera):
@@ -210,7 +217,7 @@ def evaluate_access(
                 jr_part = f"猪名寺 徒歩{inadera}分"
             return QualificationResult(
                 True,
-                f"阪急塚口 徒歩{hankyu}分・{jr_part} (≤{BOTH_MAX}分)",
+                f"阪急塚口 徒歩{hankyu}分・{jr_part} (≤{both_max}分)",
                 parsed,
             )
 
@@ -218,7 +225,7 @@ def evaluate_access(
     if (
         assume_unknown_is_hankyu
         and parsed.unknown is not None
-        and parsed.unknown <= HANKYU_PRIMARY_MAX
+        and parsed.unknown <= hankyu_primary_max
     ):
         return QualificationResult(
             True,

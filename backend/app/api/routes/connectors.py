@@ -774,6 +774,11 @@ class TsukaguchiAlertRequest(BaseModel):
         default=1981,
         description="マンションの築年下限（1981 → 新耐震基準。それ以前を除外）。0で無効",
     )
+    house_walk_max: int = Field(
+        default=12,
+        ge=1,
+        description="中古戸建ての阪急塚口 徒歩上限（既定12。マンションは10）",
+    )
     dry_run: bool = Field(
         default=False,
         description="LINE送信せず判定結果のみ返す（既読状態は更新）",
@@ -809,6 +814,7 @@ async def run_tsukaguchi_alert_endpoint(body: TsukaguchiAlertRequest):
         use_browser=body.use_browser,
         min_rooms=body.min_rooms,
         mansion_min_built_year=body.mansion_min_built_year,
+        house_walk_max=body.house_walk_max,
         dry_run=body.dry_run,
     )
 

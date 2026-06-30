@@ -97,6 +97,7 @@ async def _main(argv: list[str]) -> int:
             use_browser=not args.no_browser,
             min_rooms=(args.min_rooms if args.min_rooms is not None else settings.alert_min_rooms),
             mansion_min_built_year=settings.alert_mansion_min_built_year,
+            house_walk_max=settings.alert_house_walk_max,
             dry_run=args.dry_run,
         )
         log_summary = {k: v for k, v in summary.items() if k != "listings"}

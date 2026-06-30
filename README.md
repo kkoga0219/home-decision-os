@@ -80,7 +80,8 @@ Interactive API docs available at `http://localhost:8000/docs` (Swagger UI).
 物件が次の条件を **すべて** 満たすと通知対象になります:
 
 1. **徒歩条件**（`tsukaguchi_filter.py`）— 次のいずれか:
-   - **阪急塚口** 徒歩 **10分以内**、または
+   - **阪急塚口** 徒歩 **10分以内**（**中古戸建ては12分以内**、
+     `HDOS_ALERT_HOUSE_WALK_MAX`）、または
    - **阪急塚口** 徒歩 **15分以内** かつ
      （**JR塚口** または **猪名寺** が徒歩 **15分以内**）
 2. **間取り**: **3LDK 以上**（部屋数3以上。`HDOS_ALERT_MIN_ROOMS` で変更可）
@@ -108,6 +109,7 @@ Interactive API docs available at `http://localhost:8000/docs` (Swagger UI).
    | `HDOS_ALERT_STATE_PATH` | 既読リストの保存先（既定: `.alert_state/tsukaguchi_seen.json`） |
    | `HDOS_ALERT_MIN_ROOMS` | 最低部屋数（既定 3 = 3LDK以上） |
    | `HDOS_ALERT_MANSION_MIN_BUILT_YEAR` | マンション築年下限（既定 1981 = 新耐震基準, それ以前除外） |
+   | `HDOS_ALERT_HOUSE_WALK_MAX` | 中古戸建ての阪急塚口 徒歩上限（既定 12。マンションは10） |
    | `HDOS_ALERT_USE_BROWSER` | ブラウザ取得の ON/OFF（既定 true） |
    | `HDOS_SCRAPE_PROXY` | 任意。アンチボット回避用プロキシ（後述） |
 

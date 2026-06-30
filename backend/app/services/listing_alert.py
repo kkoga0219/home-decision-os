@@ -34,7 +34,11 @@ from app.connectors.suumo_search import (
     fetch_suumo_full_access,
 )
 from app.services.alert_state import AlertState, listing_key
-from app.services.tsukaguchi_filter import evaluate_access, layout_meets_minimum
+from app.services.tsukaguchi_filter import (
+    HANKYU_PRIMARY_MAX,
+    evaluate_access,
+    layout_meets_minimum,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +68,7 @@ async def gather_candidates(
     use_browser: bool = True,
     min_rooms: int = 3,
     mansion_min_built_year: int = 1981,
+    house_walk_max: int = 12,
 ) -> list[dict[str, Any]]:
     """Search all sources/types and return qualifying listings.
 
@@ -77,7 +82,8 @@ async def gather_candidates(
     ``browser_fetch``); it is ignored gracefully if Playwright is not
     installed. ``min_rooms`` filters by layout (3 → 3LDK 以上).
     ``mansion_min_built_year`` drops mansions built before that year
-    (houses exempt); set to 0 to disable.
+    (houses exempt); set to 0 to disable. ``house_walk_max`` is the rule (A)
+    阪急塚口 walk threshold for 中古戸建て (mansions stay at 10).
     """
     srcs = [s.lower() for s in (sources or ["suumo", "homes", "athome"])]
 
@@ -119,12 +125,13 @@ async def gather_candidates(
                 continue
             pending.append((ptype, listing, result))
 
-    await _enrich_suumo_access(pending)
+    await _enrich_suumo_access(pending, house_walk_max=house_walk_max)
 
     qualifying: dict[str, dict[str, Any]] = {}
     for ptype, listing, result in pending:
         verdict = evaluate_access(
             listing.get("access", ""),
+            hankyu_primary_max=_primary_max(ptype, house_walk_max),
             assume_unknown_is_hankyu=assume_unknown_is_hankyu,
         )
         if not verdict.qualifies:
@@ -141,6 +148,11 @@ async def gather_candidates(
     # Collapse same-building / same-room duplicates (often the same unit
     # listed by several brokers under different nc_ IDs).
     return _group_listings(list(qualifying.values()))
+
+
+def _primary_max(ptype: str, house_walk_max: int) -> int:
+    """Rule (A) 阪急塚口 walk threshold: wider for 中古戸建て."""
+    return house_walk_max if ptype == "house" else HANKYU_PRIMARY_MAX
 
 
 def _passes_age_filter(
@@ -260,6 +272,7 @@ _MAX_SUUMO_ENRICH = 80
 
 async def _enrich_suumo_access(
     pending: list[tuple[str, dict[str, Any], Any]],
+    house_walk_max: int = 12,
 ) -> None:
     """For SUUMO listings whose list-card access hides 塚口/猪名寺 access,
     fetch the detail page and replace `access` with the full 交通 row.
@@ -270,21 +283,25 @@ async def _enrich_suumo_access(
     """
     from app.config import settings
 
-    def _needs_enrich(ls: dict[str, Any]) -> bool:
+    def _needs_enrich(ptype: str, ls: dict[str, Any]) -> bool:
         if not ls.get("url"):
             return False
         # Skip only if the list-card access ALREADY qualifies — the card
         # might mention 塚口/猪名寺 but only partially (e.g. just 猪名寺,
         # missing 阪急塚口), in which case we still need the detail page.
-        if evaluate_access(ls.get("access", "")).qualifies:
+        verdict = evaluate_access(
+            ls.get("access", ""),
+            hankyu_primary_max=_primary_max(ptype, house_walk_max),
+        )
+        if verdict.qualifies:
             return False
         address = ls.get("address", "")
         return any(tok in address for tok in _ENRICH_ADDRESS_TOKENS)
 
     targets = [
         ls
-        for (_ptype, ls, result) in pending
-        if _source_of(result) == "suumo" and _needs_enrich(ls)
+        for (ptype, ls, result) in pending
+        if _source_of(result) == "suumo" and _needs_enrich(ptype, ls)
     ][:_MAX_SUUMO_ENRICH]
     if not targets:
         return
@@ -334,6 +351,7 @@ async def run_tsukaguchi_alert(
     use_browser: bool = True,
     min_rooms: int = 3,
     mansion_min_built_year: int = 1981,
+    house_walk_max: int = 12,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Run the full alert pipeline and (optionally) push to LINE.
@@ -347,6 +365,7 @@ async def run_tsukaguchi_alert(
         use_browser=use_browser,
         min_rooms=min_rooms,
         mansion_min_built_year=mansion_min_built_year,
+        house_walk_max=house_walk_max,
     )
 
     # A grouped candidate is "new" only if its BUILDING+ROOM key is unseen.

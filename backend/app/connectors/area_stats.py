@@ -26,14 +26,14 @@ class AreaData:
 
     area_name: str
     prefecture: str
-    avg_unit_price_sqm: int       # 平均㎡単価 (中古マンション)
-    avg_price_70sqm: int          # 70㎡換算平均価格
-    avg_rent_per_sqm: int         # 平均賃料㎡単価
-    avg_gross_yield: float        # 平均表面利回り
+    avg_unit_price_sqm: int  # 平均㎡単価 (中古マンション)
+    avg_price_70sqm: int  # 70㎡換算平均価格
+    avg_rent_per_sqm: int  # 平均賃料㎡単価
+    avg_gross_yield: float  # 平均表面利回り
     transaction_count_annual: int  # 年間取引件数（推定）
-    price_trend: str              # "上昇" / "横ばい" / "下落"
-    population_trend: str         # "増加" / "横ばい" / "減少"
-    source: str                   # データソース
+    price_trend: str  # "上昇" / "横ばい" / "下落"
+    population_trend: str  # "増加" / "横ばい" / "減少"
+    source: str  # データソース
     note: str = ""
 
 
@@ -297,10 +297,7 @@ class AreaStatsConnector(BaseConnector):
         return ConnectorResult(
             success=False,
             source=self.name,
-            errors=[
-                f"エリアデータが見つかりません: "
-                f"station={station_name}, city={city_name}"
-            ],
+            errors=[f"エリアデータが見つかりません: station={station_name}, city={city_name}"],
             data={"available_areas": list(AREA_DB.keys())},
         )
 

@@ -19,6 +19,7 @@ router = APIRouter(prefix="/cashflow", tags=["cashflow"])
 # Request / Response
 # ---------------------------------------------------------------------------
 
+
 class CashflowSimulationRequest(BaseModel):
     """直接パラメータ指定でのシミュレーション."""
 
@@ -82,6 +83,7 @@ class PropertyCashflowRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
 
 @router.post("/simulate")
 def simulate(body: CashflowSimulationRequest):

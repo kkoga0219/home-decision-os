@@ -9,9 +9,7 @@ from app.domain.rental_cashflow import calc_rental_cashflow
 from app.repositories import property_repo
 from app.schemas.property import RentalScenarioCreate, RentalScenarioRead
 
-router = APIRouter(
-    prefix="/properties/{property_id}/rental-scenarios", tags=["rental-scenarios"]
-)
+router = APIRouter(prefix="/properties/{property_id}/rental-scenarios", tags=["rental-scenarios"])
 
 
 @router.post("", response_model=RentalScenarioRead, status_code=201)

@@ -49,11 +49,13 @@ class TestTrendForecast:
         for qi in range(12):
             for _ in range(5):
                 price = 300_000 + qi * 10_000
-                records.append(_make_record(
-                    unit_price=price,
-                    trade_price=int(price * 65),
-                    quarter_index=qi,
-                ))
+                records.append(
+                    _make_record(
+                        unit_price=price,
+                        trade_price=int(price * 65),
+                        quarter_index=qi,
+                    )
+                )
         ds = _make_dataset(records, n_quarters=12)
         result = forecast_price_trend(ds)
         assert result is not None
@@ -67,11 +69,13 @@ class TestTrendForecast:
         for qi in range(12):
             for _ in range(5):
                 price = 500_000 - qi * 15_000
-                records.append(_make_record(
-                    unit_price=price,
-                    trade_price=int(price * 65),
-                    quarter_index=qi,
-                ))
+                records.append(
+                    _make_record(
+                        unit_price=price,
+                        trade_price=int(price * 65),
+                        quarter_index=qi,
+                    )
+                )
         ds = _make_dataset(records, n_quarters=12)
         result = forecast_price_trend(ds)
         assert result is not None
@@ -81,10 +85,12 @@ class TestTrendForecast:
         records = []
         for qi in range(12):
             for _ in range(5):
-                records.append(_make_record(
-                    unit_price=400_000 + qi * 5_000,
-                    quarter_index=qi,
-                ))
+                records.append(
+                    _make_record(
+                        unit_price=400_000 + qi * 5_000,
+                        quarter_index=qi,
+                    )
+                )
         ds = _make_dataset(records, n_quarters=12)
         result = forecast_price_trend(ds)
         assert result is not None

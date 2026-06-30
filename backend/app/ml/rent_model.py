@@ -22,12 +22,9 @@ tables with data-driven coefficients.
 from __future__ import annotations
 
 import logging
-import math
 from dataclasses import dataclass
-from typing import Any
 
 from app.ml.data_pipeline import (
-    LAYOUT_CATEGORIES,
     MLDataset,
 )
 
@@ -38,13 +35,13 @@ logger = logging.getLogger(__name__)
 class MLRentEstimate:
     """ML-enhanced rent estimation result."""
 
-    estimated_rent: int           # 推定月額賃料
+    estimated_rent: int  # 推定月額賃料
     low_estimate: int
     high_estimate: int
-    gross_yield: float            # 表面利回り
-    confidence: str               # high / medium / low
+    gross_yield: float  # 表面利回り
+    confidence: str  # high / medium / low
     method: str
-    cap_rate_used: float          # 使用した還元利回り
+    cap_rate_used: float  # 使用した還元利回り
     adjustments: dict[str, float]  # 各種調整係数
 
 
@@ -52,13 +49,13 @@ class MLRentEstimate:
 class CalibratedCapRates:
     """Area-calibrated capitalization rates."""
 
-    base_cap_rate: float          # Base cap rate for the area
+    base_cap_rate: float  # Base cap rate for the area
     age_coefficients: list[float]  # Cap rate adjustment by age bracket
     station_premium: dict[str, float]  # Station → cap rate modifier
     layout_rents: dict[str, int]  # Layout → base rent from SUUMO
-    avg_unit_price: float         # Average ㎡ unit price from MLIT
+    avg_unit_price: float  # Average ㎡ unit price from MLIT
     n_transactions: int
-    calibration_quality: str      # "high" / "medium" / "low"
+    calibration_quality: str  # "high" / "medium" / "low"
 
 
 def calibrate_cap_rates(
@@ -78,16 +75,19 @@ def calibrate_cap_rates(
     # --- Step 1: Compute actual ㎡ unit prices by age bracket ---
     # Age brackets: 0-5, 6-10, 11-15, 16-20, 21-25, 26-30, 31+
     age_brackets = [
-        (0, 5), (6, 10), (11, 15), (16, 20),
-        (21, 25), (26, 30), (31, 999),
+        (0, 5),
+        (6, 10),
+        (11, 15),
+        (16, 20),
+        (21, 25),
+        (26, 30),
+        (31, 999),
     ]
     age_avg_prices: list[float] = []
     overall_avg = sum(r.unit_price for r in records) / n if n else 0
 
     for lo, hi in age_brackets:
-        bracket_recs = [
-            r for r in records if lo <= r.age_years <= hi
-        ]
+        bracket_recs = [r for r in records if lo <= r.age_years <= hi]
         if bracket_recs:
             avg = sum(r.unit_price for r in bracket_recs) / len(bracket_recs)
             age_avg_prices.append(avg)
@@ -97,8 +97,7 @@ def calibrate_cap_rates(
     # Normalize: age_coefficient = age_bracket_avg / overall_avg
     # This tells us how much prices depreciate with age in THIS area
     age_coeffs = [
-        round(avg / overall_avg, 4) if overall_avg > 0 else 1.0
-        for avg in age_avg_prices
+        round(avg / overall_avg, 4) if overall_avg > 0 else 1.0 for avg in age_avg_prices
     ]
 
     # --- Step 2: Station-level premium/discount ---
@@ -178,25 +177,24 @@ def estimate_rent_ml(
 
         # Adjust for property-specific attributes using MLIT-derived coeffs
         age_adj = _get_age_coefficient(
-            calibrated.age_coefficients, age_years,
+            calibrated.age_coefficients,
+            age_years,
         )
         walk_adj = _walk_adjustment(walking_minutes)
         stn_adj = _station_adjustment(
-            calibrated.station_premium, station_name,
+            calibrated.station_premium,
+            station_name,
         )
 
         # These adjustments are RELATIVE to the "average" property
         # that SUUMO rent data represents
         avg_age_adj = _get_age_coefficient(
-            calibrated.age_coefficients, 15,
+            calibrated.age_coefficients,
+            15,
         )
         avg_walk_adj = _walk_adjustment(10)
 
-        relative = (
-            (age_adj / avg_age_adj)
-            * (walk_adj / avg_walk_adj)
-            * stn_adj
-        )
+        relative = (age_adj / avg_age_adj) * (walk_adj / avg_walk_adj) * stn_adj
 
         adjustments = {
             "age_factor": round(age_adj / avg_age_adj, 4),
@@ -206,9 +204,7 @@ def estimate_rent_ml(
         }
 
         estimated = int(base_rent * relative)
-        implied_yield = (
-            (estimated * 12) / price_jpy if price_jpy > 0 else 0
-        )
+        implied_yield = (estimated * 12) / price_jpy if price_jpy > 0 else 0
 
         margin = 0.08 if calibrated.calibration_quality == "high" else 0.12
 
@@ -217,14 +213,8 @@ def estimate_rent_ml(
             low_estimate=int(estimated * (1 - margin)),
             high_estimate=int(estimated * (1 + margin)),
             gross_yield=round(implied_yield, 4),
-            confidence=(
-                "high" if calibrated.calibration_quality == "high"
-                else "medium"
-            ),
-            method=(
-                f"SUUMO実賃料({layout_upper}:{base_rent:,}円)"
-                f" + MLIT補正(×{relative:.3f})"
-            ),
+            confidence=("high" if calibrated.calibration_quality == "high" else "medium"),
+            method=(f"SUUMO実賃料({layout_upper}:{base_rent:,}円) + MLIT補正(×{relative:.3f})"),
             cap_rate_used=round(implied_yield, 5),
             adjustments=adjustments,
         )
@@ -234,14 +224,16 @@ def estimate_rent_ml(
     age_adj = _get_age_coefficient(calibrated.age_coefficients, age_years)
     walk_adj = _walk_adjustment(walking_minutes)
     stn_adj = _station_adjustment(
-        calibrated.station_premium, station_name,
+        calibrated.station_premium,
+        station_name,
     )
 
     # Adjust cap rate: older/farther properties have higher cap rates
     # (i.e., rent relative to price is higher = investors demand higher yield)
     # This is the inverse of price depreciation
     avg_age_adj = _get_age_coefficient(
-        calibrated.age_coefficients, 15,
+        calibrated.age_coefficients,
+        15,
     )
     relative_quality = age_adj * walk_adj * stn_adj
     avg_quality = avg_age_adj * 1.0 * 1.0
@@ -273,14 +265,8 @@ def estimate_rent_ml(
         low_estimate=int(monthly_rent * (1 - margin)),
         high_estimate=int(monthly_rent * (1 + margin)),
         gross_yield=round(adjusted_cap, 4),
-        confidence=(
-            "medium" if calibrated.calibration_quality != "low"
-            else "low"
-        ),
-        method=(
-            f"MLIT還元利回り({adjusted_cap:.2%})"
-            f" [{calibrated.n_transactions}件calibrated]"
-        ),
+        confidence=("medium" if calibrated.calibration_quality != "low" else "low"),
+        method=(f"MLIT還元利回り({adjusted_cap:.2%}) [{calibrated.n_transactions}件calibrated]"),
         cap_rate_used=round(adjusted_cap, 5),
         adjustments=adjustments,
     )
@@ -289,6 +275,7 @@ def estimate_rent_ml(
 # ===================================================================
 # Internal helpers
 # ===================================================================
+
 
 def _get_age_coefficient(coefficients: list[float], age: float) -> float:
     """Get age depreciation coefficient from calibrated data.

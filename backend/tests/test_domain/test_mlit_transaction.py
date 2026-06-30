@@ -14,7 +14,6 @@ from app.connectors.mlit_transaction import (
     station_stats_to_area_data,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helper: create sample transaction records
 # ---------------------------------------------------------------------------

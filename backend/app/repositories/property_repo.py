@@ -1,13 +1,13 @@
 """CRUD repository for Property and related models."""
 
-from sqlalchemy.orm import joinedload, Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models.property import ExitScore, LoanScenario, Property, RentalScenario
-
 
 # ---------------------------------------------------------------------------
 # Property
 # ---------------------------------------------------------------------------
+
 
 def create_property(db: Session, **kwargs) -> Property:
     prop = Property(**kwargs)
@@ -63,6 +63,7 @@ def delete_property(db: Session, property_id: int) -> bool:
 # Loan Scenario
 # ---------------------------------------------------------------------------
 
+
 def create_loan_scenario(db: Session, **kwargs) -> LoanScenario:
     scenario = LoanScenario(**kwargs)
     db.add(scenario)
@@ -84,6 +85,7 @@ def list_loan_scenarios(db: Session, property_id: int) -> list[LoanScenario]:
 # Rental Scenario
 # ---------------------------------------------------------------------------
 
+
 def create_rental_scenario(db: Session, **kwargs) -> RentalScenario:
     scenario = RentalScenario(**kwargs)
     db.add(scenario)
@@ -104,6 +106,7 @@ def list_rental_scenarios(db: Session, property_id: int) -> list[RentalScenario]
 # ---------------------------------------------------------------------------
 # Exit Score
 # ---------------------------------------------------------------------------
+
 
 def save_exit_score(db: Session, **kwargs) -> ExitScore:
     score = ExitScore(**kwargs)

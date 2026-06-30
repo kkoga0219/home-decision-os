@@ -18,15 +18,12 @@ The result is a rich valuation report that replaces the old
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Any
 
 from app.config import settings
 from app.connectors.mlit_transaction import (
-    CITY_CODES,
-    PREFECTURE_CODES,
     city_name_to_code,
     prefecture_name_to_code,
 )
@@ -207,6 +204,7 @@ class ValuationReport:
 # Public API
 # ===================================================================
 
+
 async def run_valuation(
     price_jpy: int,
     floor_area: float = 65.0,
@@ -228,9 +226,7 @@ async def run_valuation(
     api_key = settings.mlit_api_key
 
     if not api_key:
-        report.errors.append(
-            "MLIT APIキー未設定: ML評価にはHDOS_MLIT_API_KEYが必要です"
-        )
+        report.errors.append("MLIT APIキー未設定: ML評価にはHDOS_MLIT_API_KEYが必要です")
         # Return rule-based exit score at minimum
         report.exit_score = calc_ml_exit_score(
             dataset=None,
@@ -279,18 +275,24 @@ async def run_valuation(
                 neighboring = _get_neighboring_cities(city_code)
                 if neighboring:
                     dataset = await fetch_ml_dataset_multi_city(
-                        api_key, pref_code, [city_code] + neighboring,
+                        api_key,
+                        pref_code,
+                        [city_code] + neighboring,
                         station_name=station_name,
                     )
                 else:
                     dataset = await fetch_ml_dataset(
-                        api_key, pref_code, city_code,
+                        api_key,
+                        pref_code,
+                        city_code,
                         station_name=station_name,
                     )
             else:
                 # Prefecture-wide (slower, more data)
                 dataset = await fetch_ml_dataset(
-                    api_key, pref_code, "",
+                    api_key,
+                    pref_code,
+                    "",
                     station_name=station_name,
                 )
 
@@ -357,11 +359,20 @@ async def run_valuation(
 
     try:
         pref_yield = {
-            "東京都": 0.042, "神奈川県": 0.048, "千葉県": 0.055,
-            "埼玉県": 0.055, "大阪府": 0.050, "兵庫県": 0.055,
-            "京都府": 0.050, "愛知県": 0.052, "福岡県": 0.055,
-            "北海道": 0.060, "宮城県": 0.058, "広島県": 0.056,
-            "静岡県": 0.058, "岡山県": 0.060,
+            "東京都": 0.042,
+            "神奈川県": 0.048,
+            "千葉県": 0.055,
+            "埼玉県": 0.055,
+            "大阪府": 0.050,
+            "兵庫県": 0.055,
+            "京都府": 0.050,
+            "愛知県": 0.052,
+            "福岡県": 0.055,
+            "北海道": 0.060,
+            "宮城県": 0.058,
+            "広島県": 0.056,
+            "静岡県": 0.058,
+            "岡山県": 0.060,
         }.get(prefecture, 0.058)
 
         cap_rates = calibrate_cap_rates(
@@ -405,38 +416,38 @@ async def run_valuation(
 # Neighboring city clusters for data augmentation (key metro areas)
 _CITY_NEIGHBORS: dict[str, list[str]] = {
     # 兵庫
-    "28202": ["28204", "28207"],       # 尼崎 → 西宮, 伊丹
-    "28204": ["28202", "28206"],       # 西宮 → 尼崎, 芦屋
-    "28206": ["28204", "28101"],       # 芦屋 → 西宮, 神戸東灘
-    "28207": ["28202", "28214"],       # 伊丹 → 尼崎, 宝塚
-    "28214": ["28207", "28217"],       # 宝塚 → 伊丹, 川西
-    "28101": ["28102", "28206"],       # 神戸東灘 → 神戸灘, 芦屋
-    "28110": ["28101", "28102"],       # 神戸中央 → 東灘, 灘
+    "28202": ["28204", "28207"],  # 尼崎 → 西宮, 伊丹
+    "28204": ["28202", "28206"],  # 西宮 → 尼崎, 芦屋
+    "28206": ["28204", "28101"],  # 芦屋 → 西宮, 神戸東灘
+    "28207": ["28202", "28214"],  # 伊丹 → 尼崎, 宝塚
+    "28214": ["28207", "28217"],  # 宝塚 → 伊丹, 川西
+    "28101": ["28102", "28206"],  # 神戸東灘 → 神戸灘, 芦屋
+    "28110": ["28101", "28102"],  # 神戸中央 → 東灘, 灘
     # 大阪
-    "27203": ["27205", "28202"],       # 豊中 → 吹田, 尼崎
-    "27205": ["27203", "27211"],       # 吹田 → 豊中, 茨木
-    "27127": ["27128", "27123"],       # 大阪北 → 中央, 淀川
-    "27128": ["27127", "27109"],       # 大阪中央 → 北, 天王寺
+    "27203": ["27205", "28202"],  # 豊中 → 吹田, 尼崎
+    "27205": ["27203", "27211"],  # 吹田 → 豊中, 茨木
+    "27127": ["27128", "27123"],  # 大阪北 → 中央, 淀川
+    "27128": ["27127", "27109"],  # 大阪中央 → 北, 天王寺
     # 東京23区 (隣接区)
-    "13104": ["13113", "13116"],       # 新宿 → 渋谷, 豊島
-    "13113": ["13104", "13110"],       # 渋谷 → 新宿, 目黒
-    "13110": ["13113", "13112"],       # 目黒 → 渋谷, 世田谷
-    "13112": ["13110", "13111"],       # 世田谷 → 目黒, 大田
-    "13103": ["13102", "13113"],       # 港 → 中央, 渋谷
-    "13102": ["13103", "13101"],       # 中央 → 港, 千代田
-    "13116": ["13104", "13119"],       # 豊島 → 新宿, 板橋
-    "13108": ["13102", "13107"],       # 江東 → 中央, 墨田
+    "13104": ["13113", "13116"],  # 新宿 → 渋谷, 豊島
+    "13113": ["13104", "13110"],  # 渋谷 → 新宿, 目黒
+    "13110": ["13113", "13112"],  # 目黒 → 渋谷, 世田谷
+    "13112": ["13110", "13111"],  # 世田谷 → 目黒, 大田
+    "13103": ["13102", "13113"],  # 港 → 中央, 渋谷
+    "13102": ["13103", "13101"],  # 中央 → 港, 千代田
+    "13116": ["13104", "13119"],  # 豊島 → 新宿, 板橋
+    "13108": ["13102", "13107"],  # 江東 → 中央, 墨田
     # 横浜
-    "14109": ["14117", "14118"],       # 港北 → 青葉, 都筑
-    "14104": ["14103", "14105"],       # 横浜中 → 西, 南
+    "14109": ["14117", "14118"],  # 港北 → 青葉, 都筑
+    "14104": ["14103", "14105"],  # 横浜中 → 西, 南
     # 名古屋
-    "23106": ["23105", "23107"],       # 名古屋中 → 中村, 昭和
-    "23101": ["23106", "23102"],       # 千種 → 中, 東
+    "23106": ["23105", "23107"],  # 名古屋中 → 中村, 昭和
+    "23101": ["23106", "23102"],  # 千種 → 中, 東
     # 福岡
-    "40133": ["40132", "40134"],       # 中央 → 博多, 南
-    "40132": ["40133", "40131"],       # 博多 → 中央, 東
+    "40133": ["40132", "40134"],  # 中央 → 博多, 南
+    "40132": ["40133", "40131"],  # 博多 → 中央, 東
     # 札幌
-    "01101": ["01102", "01105"],       # 中央 → 北, 豊平
+    "01101": ["01102", "01105"],  # 中央 → 北, 豊平
 }
 
 
@@ -452,6 +463,7 @@ def _infer_location(station_name: str) -> tuple[str, str] | None:
     """
     try:
         from app.connectors.enrichment import _STATION_LOCATION_MAP
+
         if station_name in _STATION_LOCATION_MAP:
             return _STATION_LOCATION_MAP[station_name]
         for known, codes in _STATION_LOCATION_MAP.items():

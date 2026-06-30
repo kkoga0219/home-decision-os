@@ -44,15 +44,15 @@ DEFAULT_GROSS_YIELDS = {
 # These represent the rent retention rate vs. new construction
 # -------------------------------------------------------------------
 AGE_DISCOUNT = {
-    (0, 3): 1.00,    # 新築同等
-    (4, 7): 0.97,    # 築浅
-    (8, 12): 0.93,   # 築10年前後: 大規模修繕前
+    (0, 3): 1.00,  # 新築同等
+    (4, 7): 0.97,  # 築浅
+    (8, 12): 0.93,  # 築10年前後: 大規模修繕前
     (13, 17): 0.88,  # 築15年前後: 大規模修繕後なら維持
     (18, 22): 0.82,  # 築20年前後: 設備の古さが影響
     (23, 27): 0.76,  # 築25年前後: 旧耐震基準ボーダー
     (28, 32): 0.70,  # 築30年前後: リノベ物件は例外
     (33, 40): 0.64,  # 築35年前後
-    (41, 999): 0.58, # 築40年超
+    (41, 999): 0.58,  # 築40年超
 }
 
 # -------------------------------------------------------------------
@@ -60,12 +60,12 @@ AGE_DISCOUNT = {
 # Source: 東京カンテイ「駅距離と資産性」レポート (2023)
 # -------------------------------------------------------------------
 STATION_PREMIUM = {
-    (0, 3): 1.05,     # 駅3分以内: +5%
-    (4, 5): 1.02,     # 駅5分以内: +2%
-    (6, 7): 1.00,     # 基準
-    (8, 10): 0.97,    # 徒歩10分まで: -3%
-    (11, 15): 0.92,   # バス便距離: -8%
-    (16, 20): 0.87,   # バス必須: -13%
+    (0, 3): 1.05,  # 駅3分以内: +5%
+    (4, 5): 1.02,  # 駅5分以内: +2%
+    (6, 7): 1.00,  # 基準
+    (8, 10): 0.97,  # 徒歩10分まで: -3%
+    (11, 15): 0.92,  # バス便距離: -8%
+    (16, 20): 0.87,  # バス必須: -13%
     (21, 999): 0.82,  # 遠距離: -18%
 }
 
@@ -74,11 +74,11 @@ STATION_PREMIUM = {
 # Source: 賃貸住宅市場レポート 一般的な傾向値
 # -------------------------------------------------------------------
 AREA_ADJUSTMENT = {
-    (0, 25): 1.10,    # コンパクト: ㎡単価高い
-    (26, 40): 1.05,   # 単身向け
-    (41, 55): 1.00,   # 基準 (DINKS)
-    (56, 70): 0.97,   # ファミリー
-    (71, 85): 0.94,   # 広めファミリー
+    (0, 25): 1.10,  # コンパクト: ㎡単価高い
+    (26, 40): 1.05,  # 単身向け
+    (41, 55): 1.00,  # 基準 (DINKS)
+    (56, 70): 0.97,  # ファミリー
+    (71, 85): 0.94,  # 広めファミリー
     (86, 999): 0.90,  # 大型: ㎡単価下がる
 }
 
@@ -86,6 +86,7 @@ AREA_ADJUSTMENT = {
 @dataclass
 class RentEstimate:
     """Estimated monthly rent with confidence range."""
+
     estimated_rent: int
     low_estimate: int
     high_estimate: int
@@ -148,8 +149,13 @@ class RentEstimatorConnector(BaseConnector):
         # -------------------------------------------------------
         if rental_market_data and rental_market_data.get("rents_by_layout"):
             estimate = self._tier1_suumo(
-                rental_market_data, layout, area,
-                age_factor, station_factor, area_factor, price_jpy,
+                rental_market_data,
+                layout,
+                area,
+                age_factor,
+                station_factor,
+                area_factor,
+                price_jpy,
             )
             if estimate:
                 return self._to_result(estimate)
@@ -159,8 +165,13 @@ class RentEstimatorConnector(BaseConnector):
         # -------------------------------------------------------
         if area_avg_unit_price and floor_area_sqm:
             estimate = self._tier2_blend(
-                price_jpy, area_avg_unit_price, floor_area_sqm,
-                age_factor, station_factor, area_factor, prefecture,
+                price_jpy,
+                area_avg_unit_price,
+                floor_area_sqm,
+                age_factor,
+                station_factor,
+                area_factor,
+                prefecture,
             )
             return self._to_result(estimate)
 
@@ -168,7 +179,11 @@ class RentEstimatorConnector(BaseConnector):
         # Tier 3: Yield-based fallback
         # -------------------------------------------------------
         estimate = self._tier3_yield(
-            price_jpy, age_factor, station_factor, area_factor, prefecture,
+            price_jpy,
+            age_factor,
+            station_factor,
+            area_factor,
+            prefecture,
         )
         return self._to_result(estimate)
 
@@ -260,8 +275,7 @@ class RentEstimatorConnector(BaseConnector):
             high_estimate=int(blended * 1.15),
             gross_yield=round(adjusted_yield, 4),
             method=(
-                f"相場ブレンド推定 (利回り{adjusted_yield:.1%}"
-                f" + ㎡単価{area_avg_unit_price:,}円)"
+                f"相場ブレンド推定 (利回り{adjusted_yield:.1%} + ㎡単価{area_avg_unit_price:,}円)"
             ),
             confidence="medium",
         )

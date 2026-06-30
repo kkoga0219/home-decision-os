@@ -6,10 +6,10 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-
 # ---------------------------------------------------------------------------
 # Property
 # ---------------------------------------------------------------------------
+
 
 class PropertyCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
@@ -80,6 +80,7 @@ class PropertyRead(BaseModel):
 # Loan Scenario
 # ---------------------------------------------------------------------------
 
+
 class LoanScenarioCreate(BaseModel):
     label: str | None = None
     down_payment_jpy: int = Field(0, ge=0)
@@ -111,6 +112,7 @@ class LoanScenarioRead(BaseModel):
 # Rental Scenario
 # ---------------------------------------------------------------------------
 
+
 class RentalScenarioCreate(BaseModel):
     label: str | None = None
     expected_rent_jpy: int = Field(..., gt=0)
@@ -141,6 +143,7 @@ class RentalScenarioRead(BaseModel):
 # Exit Score
 # ---------------------------------------------------------------------------
 
+
 class ExitScoreRead(BaseModel):
     id: int
     property_id: int
@@ -161,6 +164,7 @@ class ExitScoreRead(BaseModel):
 # ---------------------------------------------------------------------------
 # Comparison
 # ---------------------------------------------------------------------------
+
 
 class ComparisonRequest(BaseModel):
     property_ids: list[int] = Field(..., min_length=2, max_length=10)

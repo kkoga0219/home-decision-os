@@ -55,6 +55,7 @@ class URLPreviewConnector(BaseConnector):
 # Extraction router
 # ---------------------------------------------------------------------------
 
+
 def _extract_all(html: str, url: str) -> dict[str, Any]:
     """Route to the appropriate parser based on URL domain."""
     data: dict[str, Any] = {"url": url}
@@ -81,6 +82,7 @@ def _extract_all(html: str, url: str) -> dict[str, Any]:
 # Basic meta / OGP extraction
 # ---------------------------------------------------------------------------
 
+
 def _extract_meta(html: str) -> dict[str, Any]:
     """Extract OGP and basic meta tags from HTML."""
     data: dict[str, Any] = {}
@@ -93,12 +95,14 @@ def _extract_meta(html: str) -> dict[str, Any]:
         # Try both attribute orderings
         m = re.search(
             rf'<meta\s+(?:property|name)="{prop}"\s+content="([^"]*)"',
-            html, re.IGNORECASE,
+            html,
+            re.IGNORECASE,
         )
         if not m:
             m = re.search(
                 rf'<meta\s+content="([^"]*)"\s+(?:property|name)="{prop}"',
-                html, re.IGNORECASE,
+                html,
+                re.IGNORECASE,
             )
         if m:
             key = prop.replace("og:", "")
@@ -114,6 +118,7 @@ def _extract_meta(html: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # SUUMO deep parser
 # ---------------------------------------------------------------------------
+
 
 def _parse_suumo_deep(html: str, title: str, description: str) -> dict[str, Any]:
     """Deep parse SUUMO property pages.
@@ -232,6 +237,7 @@ def _parse_suumo_deep(html: str, title: str, description: str) -> dict[str, Any]
 # LIFULL HOME'S parser (basic)
 # ---------------------------------------------------------------------------
 
+
 def _parse_lifull_hints(html: str, title: str, description: str) -> dict[str, Any]:
     """Parse LIFULL HOME'S property pages."""
     body_text = _strip_tags(html)
@@ -241,6 +247,7 @@ def _parse_lifull_hints(html: str, title: str, description: str) -> dict[str, An
 # ---------------------------------------------------------------------------
 # Generic parser (any site)
 # ---------------------------------------------------------------------------
+
 
 def _parse_generic_hints(title: str, description: str, body_text: str = "") -> dict[str, Any]:
     """Try to extract property data from any page using common Japanese RE patterns."""
@@ -285,6 +292,7 @@ def _parse_generic_hints(title: str, description: str, body_text: str = "") -> d
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _extract_near_label(
     text: str,

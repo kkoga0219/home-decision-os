@@ -49,13 +49,20 @@ _RETRY_DELAY = 2.0  # seconds
 
 # Prefecture slug mapping for HOME'S URLs
 _PREF_SLUGS: dict[str, str] = {
-    "北海道": "hokkaido", "宮城県": "miyagi",
-    "東京都": "tokyo", "神奈川県": "kanagawa",
-    "埼玉県": "saitama", "千葉県": "chiba",
-    "愛知県": "aichi", "大阪府": "osaka",
-    "京都府": "kyoto", "兵庫県": "hyogo",
-    "福岡県": "fukuoka", "広島県": "hiroshima",
-    "奈良県": "nara", "滋賀県": "shiga",
+    "北海道": "hokkaido",
+    "宮城県": "miyagi",
+    "東京都": "tokyo",
+    "神奈川県": "kanagawa",
+    "埼玉県": "saitama",
+    "千葉県": "chiba",
+    "愛知県": "aichi",
+    "大阪府": "osaka",
+    "京都府": "kyoto",
+    "兵庫県": "hyogo",
+    "福岡県": "fukuoka",
+    "広島県": "hiroshima",
+    "奈良県": "nara",
+    "滋賀県": "shiga",
 }
 
 # City → HOME'S URL slug
@@ -136,7 +143,10 @@ class HomesSearchConnector(BaseConnector):
                         await asyncio.sleep(1.0)
 
                     html = await self._fetch_page_with_retry(
-                        client, url, page, errors,
+                        client,
+                        url,
+                        page,
+                        errors,
                     )
                     if html is None:
                         break
@@ -176,7 +186,9 @@ class HomesSearchConnector(BaseConnector):
         for attempt in range(_MAX_RETRIES):
             logger.info(
                 "Fetching HOME'S page %d (attempt %d): %s",
-                page, attempt + 1, url,
+                page,
+                attempt + 1,
+                url,
             )
             headers = {**HEADERS, "Referer": "https://www.homes.co.jp/"}
             resp = await client.get(url, headers=headers)
@@ -189,16 +201,16 @@ class HomesSearchConnector(BaseConnector):
             if resp.status_code in (202, 429, 503):
                 logger.warning(
                     "HOME'S page %d: HTTP %d, retrying in %.1fs",
-                    page, resp.status_code, _RETRY_DELAY,
+                    page,
+                    resp.status_code,
+                    _RETRY_DELAY,
                 )
                 await asyncio.sleep(_RETRY_DELAY)
                 continue
 
             # 3xx after follow_redirects=True means chain exhausted
             # 4xx/5xx = hard error, don't retry
-            errors.append(
-                f"HOME'S page {page}: HTTP {resp.status_code}"
-            )
+            errors.append(f"HOME'S page {page}: HTTP {resp.status_code}")
             return None
 
         # All retries exhausted — try to parse the last response anyway
@@ -206,14 +218,12 @@ class HomesSearchConnector(BaseConnector):
         if resp.status_code in (200, 202):
             logger.info(
                 "HOME'S page %d: using response despite HTTP %d",
-                page, resp.status_code,
+                page,
+                resp.status_code,
             )
             return resp.text
 
-        errors.append(
-            f"HOME'S page {page}: HTTP {resp.status_code} after "
-            f"{_MAX_RETRIES} retries"
-        )
+        errors.append(f"HOME'S page {page}: HTTP {resp.status_code} after {_MAX_RETRIES} retries")
         return None
 
     @staticmethod
@@ -248,13 +258,15 @@ class HomesSearchConnector(BaseConnector):
 # HTML parsing
 # -------------------------------------------------------------------
 
+
 def _parse_homes_page(html: str) -> list[dict[str, Any]]:
     """Parse HOME'S listing page."""
     listings: list[dict[str, Any]] = []
 
     # Split by listing card boundaries
     chunks = re.split(
-        r'<div\s+class="[^"]*mod-listKks[^"]*"', html,
+        r'<div\s+class="[^"]*mod-listKks[^"]*"',
+        html,
     )
 
     for chunk in chunks[1:]:
@@ -274,7 +286,8 @@ def _parse_homes_card(chunk: str) -> dict[str, Any] | None:
 
     # Building name: span.bukkenName
     m = re.search(
-        r'class="bukkenName"[^>]*>([^<]+)<', chunk,
+        r'class="bukkenName"[^>]*>([^<]+)<',
+        chunk,
     )
     if m:
         info["name"] = m.group(1).strip()
@@ -300,23 +313,23 @@ def _parse_homes_card(chunk: str) -> dict[str, Any] | None:
     )
     if m:
         try:
-            info["price_jpy"] = (
-                int(m.group(1).replace(",", "")) * 10_000
-            )
+            info["price_jpy"] = int(m.group(1).replace(",", "")) * 10_000
             info["price_text"] = f"{m.group(1)}万円"
         except ValueError:
             pass
 
     # Address: td.address (NOT th.address, which holds the "所在地" label)
     m = re.search(
-        r'<td\s+class="address"[^>]*>([^<]+)<', chunk,
+        r'<td\s+class="address"[^>]*>([^<]+)<',
+        chunk,
     )
     if m:
         info["address"] = m.group(1).strip()
 
     # Station/access: td.traffic (NOT th.traffic, which holds "交通")
     m = re.search(
-        r'<td\s+class="traffic"[^>]*>([^<]+)<', chunk,
+        r'<td\s+class="traffic"[^>]*>([^<]+)<',
+        chunk,
     )
     if m:
         access = m.group(1).strip()

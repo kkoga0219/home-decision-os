@@ -49,27 +49,27 @@ class CompTransaction:
     station_name: str
     district: str
     trade_period: str
-    similarity: float     # 0-1, higher is more similar
-    time_weight: float    # Recency weight
+    similarity: float  # 0-1, higher is more similar
+    time_weight: float  # Recency weight
 
 
 @dataclass
 class CompsResult:
     """Result of comparable transaction analysis."""
 
-    n_comps: int               # Number of comparable transactions
-    median_unit_price: int     # 中央値 ㎡単価
-    p25_unit_price: int        # 25th percentile
-    p75_unit_price: int        # 75th percentile
-    weighted_avg_price: int    # 類似度加重平均 ㎡単価
-    median_total_price: int    # 中央値 総額 (for subject area)
-    price_range_low: int       # Estimated price range low
-    price_range_high: int      # Estimated price range high
+    n_comps: int  # Number of comparable transactions
+    median_unit_price: int  # 中央値 ㎡単価
+    p25_unit_price: int  # 25th percentile
+    p75_unit_price: int  # 75th percentile
+    weighted_avg_price: int  # 類似度加重平均 ㎡単価
+    median_total_price: int  # 中央値 総額 (for subject area)
+    price_range_low: int  # Estimated price range low
+    price_range_high: int  # Estimated price range high
     deviation_pct: float | None  # Listing price vs comps median
-    assessment: str            # 割安/適正/割高
+    assessment: str  # 割安/適正/割高
     comps: list[CompTransaction]  # Top comparable transactions
-    subject_area: float        # Subject property area (for display)
-    search_criteria: str       # Human-readable search description
+    subject_area: float  # Subject property area (for display)
+    search_criteria: str  # Human-readable search description
 
 
 # ===================================================================
@@ -86,6 +86,7 @@ W_STATION = 0.10
 # ===================================================================
 # Public API
 # ===================================================================
+
 
 def find_comps(
     dataset: MLDataset,
@@ -162,10 +163,7 @@ def find_comps(
 
         # Station bonus: 0 if same station, 0.5 if different
         if station_name and rec.station_name:
-            same_station = (
-                station_name in rec.station_name
-                or rec.station_name in station_name
-            )
+            same_station = station_name in rec.station_name or rec.station_name in station_name
             d_station = 0.0 if same_station else 0.5
         else:
             d_station = 0.3
@@ -205,28 +203,32 @@ def find_comps(
         layout_str = LAYOUT_CAT_NAMES[rec.layout_cat]
         raw_layout = rec.raw.get("FloorPlan", layout_str)
 
-        comps.append(CompTransaction(
-            trade_price=rec.trade_price,
-            unit_price=int(rec.unit_price),
-            floor_area=rec.floor_area,
-            age_years=rec.age_years,
-            walking_minutes=rec.walking_minutes,
-            layout=raw_layout,
-            station_name=rec.station_name,
-            district=rec.district,
-            trade_period=rec.trade_period,
-            similarity=round(sim, 3),
-            time_weight=round(0.5 + 0.5 * (rec.quarter_index / max_q), 3),
-        ))
+        comps.append(
+            CompTransaction(
+                trade_price=rec.trade_price,
+                unit_price=int(rec.unit_price),
+                floor_area=rec.floor_area,
+                age_years=rec.age_years,
+                walking_minutes=rec.walking_minutes,
+                layout=raw_layout,
+                station_name=rec.station_name,
+                district=rec.district,
+                trade_period=rec.trade_period,
+                similarity=round(sim, 3),
+                time_weight=round(0.5 + 0.5 * (rec.quarter_index / max_q), 3),
+            )
+        )
 
     # Compute statistics using similarity-weighted values
     unit_prices = [c.unit_price for c in comps]
     weights = [c.similarity * c.time_weight for c in comps]
     total_w = sum(weights)
 
-    weighted_avg = int(
-        sum(up * w for up, w in zip(unit_prices, weights)) / total_w
-    ) if total_w > 0 else int(sum(unit_prices) / len(unit_prices))
+    weighted_avg = (
+        int(sum(up * w for up, w in zip(unit_prices, weights)) / total_w)
+        if total_w > 0
+        else int(sum(unit_prices) / len(unit_prices))
+    )
 
     sorted_prices = sorted(unit_prices)
     n = len(sorted_prices)
@@ -243,7 +245,8 @@ def find_comps(
     assessment = "適正"
     if listing_price and listing_price > 0 and median_total > 0:
         deviation = round(
-            (listing_price / median_total - 1) * 100, 1,
+            (listing_price / median_total - 1) * 100,
+            1,
         )
         if deviation < -15:
             assessment = "かなり割安（類似取引比）"

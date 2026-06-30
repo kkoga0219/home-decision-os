@@ -14,6 +14,7 @@ from typing import Any
 @dataclass
 class ConnectorResult:
     """Standardised result from any connector."""
+
     success: bool
     source: str  # connector name
     data: dict[str, Any] = field(default_factory=dict)

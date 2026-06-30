@@ -89,14 +89,16 @@ class TestMLExitScore:
         records = []
         for i in range(n):
             qi = i % 16
-            records.append(_make_record(
-                trade_price=25_000_000 + (i % 10) * 1_000_000,
-                unit_price=(25_000_000 + (i % 10) * 1_000_000) / 65.0,
-                floor_area=55.0 + (i % 5) * 5,
-                age_years=5.0 + (i % 20),
-                walking_minutes=3.0 + (i % 10),
-                quarter_index=qi,
-            ))
+            records.append(
+                _make_record(
+                    trade_price=25_000_000 + (i % 10) * 1_000_000,
+                    unit_price=(25_000_000 + (i % 10) * 1_000_000) / 65.0,
+                    floor_area=55.0 + (i % 5) * 5,
+                    age_years=5.0 + (i % 20),
+                    walking_minutes=3.0 + (i % 10),
+                    quarter_index=qi,
+                )
+            )
         return _make_dataset(records, n_quarters=16)
 
     def test_data_driven_quality(self):
@@ -152,11 +154,13 @@ class TestMLExitScore:
             qi = i % 16
             # Prices increase with later quarters
             price = 25_000_000 + qi * 500_000
-            records.append(_make_record(
-                trade_price=price,
-                unit_price=price / 65.0,
-                quarter_index=qi,
-            ))
+            records.append(
+                _make_record(
+                    trade_price=price,
+                    unit_price=price / 65.0,
+                    quarter_index=qi,
+                )
+            )
         ds = _make_dataset(records, n_quarters=16)
         result = calc_ml_exit_score(
             dataset=ds,

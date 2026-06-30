@@ -3,8 +3,8 @@
 import math
 
 from app.ml.data_pipeline import (
-    LAYOUT_CATEGORIES,
     LAYOUT_CAT_NAMES,
+    LAYOUT_CATEGORIES,
     NUM_LAYOUT_CATS,
     CleanRecord,
     MLDataset,
@@ -47,9 +47,9 @@ def _build_features_for_record(
         rec.floor_area,
         math.log(max(rec.floor_area, 1)),
         rec.age_years,
-        rec.age_years ** 2,
+        rec.age_years**2,
         rec.walking_minutes,
-        rec.walking_minutes ** 2,
+        rec.walking_minutes**2,
         rec.age_years * rec.walking_minutes,
         rec.quarter_index / max(max_quarter, 1),
         station_pop.get(rec.station_name, 1) / max(sum(station_pop.values()), 1),
@@ -103,8 +103,11 @@ class TestMLDataset:
 
     def test_empty_dataset(self):
         ds = MLDataset(
-            X=[], y=[], feature_names=[],
-            records=[], station_popularity={},
+            X=[],
+            y=[],
+            feature_names=[],
+            records=[],
+            station_popularity={},
             quarter_labels=[],
         )
         assert ds.n_samples == 0

@@ -39,10 +39,7 @@ def _make_dataset(records: list[CleanRecord]) -> MLDataset:
 
 class TestCalibrateCapRates:
     def test_returns_calibrated_rates(self):
-        records = [
-            _make_record(age_years=i * 3)
-            for i in range(20)
-        ]
+        records = [_make_record(age_years=i * 3) for i in range(20)]
         ds = _make_dataset(records)
         cap_rates = calibrate_cap_rates(ds)
         assert isinstance(cap_rates, CalibratedCapRates)
@@ -53,17 +50,15 @@ class TestCalibrateCapRates:
         records = [_make_record() for _ in range(20)]
         ds = _make_dataset(records)
         cap_rates = calibrate_cap_rates(
-            ds, prefecture_base_yield=0.060,
+            ds,
+            prefecture_base_yield=0.060,
         )
         assert cap_rates.base_cap_rate > 0
 
 
 class TestEstimateRentML:
     def _get_cap_rates(self) -> CalibratedCapRates:
-        records = [
-            _make_record(age_years=5 + i * 2)
-            for i in range(30)
-        ]
+        records = [_make_record(age_years=5 + i * 2) for i in range(30)]
         ds = _make_dataset(records)
         return calibrate_cap_rates(ds)
 
